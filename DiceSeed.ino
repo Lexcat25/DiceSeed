@@ -1,11 +1,14 @@
 // Offline dice-roll -> BIP39 seed phrase generator for the LilyGO T-Display S3.
 //
 // Security model:
-//   - No WiFi/Bluetooth is ever initialized.
+//   - Neither WiFi.h nor any Bluetooth API is included or called anywhere in
+//     this file, so the Arduino-ESP32 core never brings up either radio.
 //   - Rolls, entropy, and the mnemonic live only in RAM (plain arrays on the
 //     stack/BSS). Nothing is ever written to flash, NVS/Preferences, or Serial.
 //   - RAM is scrubbed at boot (defense against residue from a previous run)
-//     and explicitly zeroed before the final reset-to-wipe.
+//     and again before the final reset-to-wipe, using
+//     mbedtls_platform_zeroize() rather than memset() so the compiler can't
+//     optimize the clear away as a dead store.
 //   - Entropy is derived only from the dice rolls you enter — no hardware RNG
 //     is mixed in, so the whole process is independently auditable.
 //
@@ -17,11 +20,34 @@
 //   bits BIP39 requires, and the combined bitstream is split into 11-bit
 //   groups that index into the 2048-word list.
 //
+// What this CANNOT protect against: the T-Display S3's USB port is a native
+// USB-Serial-JTAG peripheral that is enabled by default at the silicon level.
+// Anyone with a USB cable and OpenOCD can halt the CPU and dump all of RAM
+// while a phrase is on screen, regardless of anything this sketch does. Run
+// it on battery power with no USB cable attached whenever you're actually
+// viewing or entering sensitive rolls/words.
+//
 // Hardware: LilyGO T-Display S3 (plain, non-touch). Buttons: GPIO0, GPIO14.
+//
+// Version history:
+//   1.0.0 (2026-08-25) - Initial version.
+//   1.1.0 (2026-08-25) - Security hardening pass: wipe no longer risks
+//                         stranding the board in the ROM bootloader; all
+//                         sensitive-buffer clears use mbedtls_platform_zeroize
+//                         instead of memset (compiler can't elide it as a
+//                         dead store); big[] in computeMnemonic is now
+//                         scrubbed too; word display uses print() instead of
+//                         printf() (printf leaves a formatted copy on the
+//                         stack); removed WiFi.h/btStop() entirely (calling
+//                         them to "turn radios off" was initializing the
+//                         radio driver first); added a same-roll sanity
+//                         warning; documented the USB-JTAG physical exposure.
 
-#include <WiFi.h>
+#define FIRMWARE_VERSION "1.1.0"
+
 #include <TFT_eSPI.h>
 #include "mbedtls/sha256.h"
+#include "mbedtls/platform_util.h"
 // Official BIP39 English wordlist (2048 words), verbatim from
 // https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt
 static const char* const BIP39_WORDS[2048] = {
@@ -2098,11 +2124,15 @@ enum Screen { SCR_MENU, SCR_ROLLING, SCR_RESULT, SCR_WIPE_CONFIRM };
 Screen screen = SCR_MENU;
 
 // ---- RAM scrubbing -----------------------------------------------------
+// Uses mbedtls_platform_zeroize() instead of memset(): a plain memset on a
+// buffer nobody reads again is a "dead store" the compiler is allowed to
+// (and does) optimize away. platform_zeroize is specifically designed to
+// survive that optimization.
 void scrubSensitiveRAM() {
-  memset(rolls, 0, sizeof(rolls));
-  memset(entropy, 0, sizeof(entropy));
-  memset(combined, 0, sizeof(combined));
-  memset(mnemonicWords, 0, sizeof(mnemonicWords));
+  mbedtls_platform_zeroize(rolls, sizeof(rolls));
+  mbedtls_platform_zeroize(entropy, sizeof(entropy));
+  mbedtls_platform_zeroize(combined, sizeof(combined));
+  mbedtls_platform_zeroize(mnemonicWords, sizeof(mnemonicWords));
 }
 
 // ---- Bignum: buf is big-endian, len bytes. buf = buf*6 + digit ------------
@@ -2151,20 +2181,19 @@ void computeMnemonic() {
   mbedtls_sha256_finish(&ctx, hash);
   mbedtls_sha256_free(&ctx);
 
-  // Pack entropy bits followed by the top csBits bits of hash[0] (+ hash[1]
-  // for the 24-word case, since csBits can exceed one byte's worth of margin).
-  memset(combined, 0, sizeof(combined));
+  // Pack entropy bits followed by the top csBits bits of hash[0]. csBits is
+  // never more than 8 (one byte), so hash[0] alone is always enough.
+  mbedtls_platform_zeroize(combined, sizeof(combined));
   memcpy(combined, entropy, entBytes);
   combined[entBytes] = hash[0]; // only the top csBits bits of this are used
 
-  int totalBits = entBytes * 8 + csBits;
   for (int w = 0; w < wordCount; w++) {
     uint16_t idx = readBits(combined, w * 11, 11);
     strncpy(mnemonicWords[w], BIP39_WORDS[idx], sizeof(mnemonicWords[w]) - 1);
   }
 
-  memset(hash, 0, sizeof(hash));
-  (void)totalBits;
+  mbedtls_platform_zeroize(hash, sizeof(hash));
+  mbedtls_platform_zeroize(big, sizeof(big));
 }
 
 // ---- Buttons (active LOW, simple debounce) ---------------------------------
@@ -2201,6 +2230,7 @@ int currentRollIndex = 0;
 uint8_t currentFace = 1;
 int resultPage = 0;
 unsigned long bothDownSince = 0;
+bool allRollsIdentical = false; // sanity flag: every roll came out the same face
 
 void drawMenu() {
   tft.fillScreen(TFT_BLACK);
@@ -2220,6 +2250,9 @@ void drawMenu() {
   tft.setCursor(10, 145);
   tft.setTextSize(1);
   tft.println("BTN1: toggle   BTN2: select");
+  tft.setCursor(260, 155);
+  tft.print("v");
+  tft.print(FIRMWARE_VERSION);
 }
 
 void startRolling() {
@@ -2259,14 +2292,27 @@ void drawResult() {
   int perPage = 4;
   int totalPages = (wordCount + perPage - 1) / perPage;
   tft.setCursor(10, 5);
-  tft.printf("Words (page %d/%d)\n", resultPage + 1, totalPages);
+  if (resultPage == 0 && allRollsIdentical) {
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.println("WARN: rolls all same");
+  } else {
+    tft.printf("Words (page %d/%d)\n", resultPage + 1, totalPages);
+  }
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
   int y = 35;
   for (int i = 0; i < perPage; i++) {
     int idx = resultPage * perPage + i;
     if (idx >= wordCount) break;
     tft.setCursor(10, y);
-    tft.printf("%2d. %s\n", idx + 1, mnemonicWords[idx]);
+    // print(), not printf(): printf formats into a stack buffer first,
+    // leaving an extra un-scrubbed copy of the word behind. print() streams
+    // the string straight out with no intermediate buffer.
+    if (idx + 1 < 10) tft.print(' ');
+    tft.print(idx + 1);
+    tft.print(". ");
+    tft.print(mnemonicWords[idx]);
+    tft.print("\n");
     y += 25;
   }
   tft.setTextSize(1);
@@ -2298,8 +2344,11 @@ void setup() {
   pinMode(PIN_BUTTON_1, INPUT_PULLUP);
   pinMode(PIN_BUTTON_2, INPUT_PULLUP);
 
-  WiFi.mode(WIFI_OFF);
-  btStop();
+  // No WiFi.h/BluetoothSerial and no calls into either radio's API at all:
+  // the Arduino-ESP32 core never starts a radio on its own, and calling
+  // WiFi.mode()/btStop() to "turn it off" actually initializes the radio
+  // driver first (including an NVS touch for WiFi), which is worse than
+  // just never touching it.
 
   // Scrub RAM before first use too, in case of a warm reset with old content.
   scrubSensitiveRAM();
@@ -2337,9 +2386,13 @@ void loop() {
         currentRollIndex++;
         currentFace = 1;
         if (currentRollIndex >= rollsNeeded) {
+          allRollsIdentical = true;
+          for (int i = 1; i < rollsNeeded; i++) {
+            if (rolls[i] != rolls[0]) { allRollsIdentical = false; break; }
+          }
           computeMnemonic();
           // Rolls are no longer needed once the mnemonic is derived.
-          memset(rolls, 0, sizeof(rolls));
+          mbedtls_platform_zeroize(rolls, sizeof(rolls));
           resultPage = 0;
           screen = SCR_RESULT;
           drawResult();
@@ -2364,7 +2417,15 @@ void loop() {
           screen = SCR_WIPE_CONFIRM;
           drawWipeConfirm();
           scrubSensitiveRAM();
-          delay(300);
+          // GPIO0 (BTN1) is the ESP32-S3's boot-strapping pin: if it's still
+          // held LOW when the chip resets, it boots into the ROM download
+          // bootloader instead of this sketch (black screen, stuck in
+          // bootloader over USB). Wait for both buttons to be physically
+          // released before resetting.
+          while (digitalRead(PIN_BUTTON_1) == LOW || digitalRead(PIN_BUTTON_2) == LOW) {
+            delay(20);
+          }
+          delay(300); // let the pin settle high before the reset samples it
           esp_restart();
         }
       } else {
