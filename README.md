@@ -26,6 +26,8 @@ checksum → word list lookup. No hardware RNG, no radio, ever, is mixed in
 
 ## Build & flash
 
+Confirmed working on real hardware (display renders correctly) as of v1.2.0.
+
 1. Install [Arduino IDE](https://www.arduino.cc/en/software) (2.x) or
    [`arduino-cli`](https://arduino.github.io/arduino-cli/).
 2. Add the ESP32 board index:
