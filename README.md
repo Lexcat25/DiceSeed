@@ -34,7 +34,11 @@ checksum → word list lookup. No hardware RNG, no radio, ever, is mixed in
    platform (tested against 3.3.11).
 3. Install the **TFT_eSPI** library (tested against 2.5.43) via Library
    Manager.
-4. Board: **ESP32S3 Dev Module** (`esp32:esp32:esp32s3`).
+4. Board: **LilyGo T-Display-S3** (`esp32:esp32:lilygo_t_display_s3`) — the `esp32:esp32`
+   platform ships a dedicated board entry for this exact board (search "T-Display-S3" in
+   Boards Manager), which also gets the flash size (16MB) and partition table right. The
+   generic "ESP32S3 Dev Module" entry also compiles this sketch, but under different
+   flash/partition defaults that don't match what's actually on the board.
 5. Open `DiceSeed.ino` and compile/upload.
 
 You do **not** need to hand-edit TFT_eSPI's own `User_Setup_Select.h`. This
