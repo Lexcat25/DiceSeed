@@ -91,7 +91,40 @@ int main() {
     checkEq(label3, joined2, v.mnemonic);
   }
 
-  printf("\n%d BIP39 vectors + %d dice vectors x3 checks, %d failure(s)\n",
-         BIP39_VECTORS_COUNT, DICE_VECTORS_COUNT, failures);
+  printf("\n=== SEEDSIGNER_VECTORS (SeedSigner's own published dice test vectors, compat mode) ===\n");
+  for (int i = 0; i < SEEDSIGNER_VECTORS_COUNT; i++) {
+    const DiceVector& v = SEEDSIGNER_VECTORS[i];
+
+    uint8_t entropy[32];
+    diceseed::diceToEntropySeedSignerCompat(v.rolls, v.roll_count, v.ent_bytes, entropy);
+
+    char gotHex[65];
+    for (int b = 0; b < v.ent_bytes; b++) snprintf(gotHex + b * 2, 3, "%02x", entropy[b]);
+
+    char label1[64];
+    snprintf(label1, sizeof(label1), "seedsigner_vector[%s].entropy", v.name);
+    checkEq(label1, gotHex, v.entropy_hex);
+
+    char words[24][16];
+    diceseed::entropyToMnemonic(entropy, v.ent_bytes, v.word_count, v.cs_bits, words);
+    char joined[512];
+    joinWords(words, v.word_count, joined);
+
+    char label2[64];
+    snprintf(label2, sizeof(label2), "seedsigner_vector[%s].mnemonic", v.name);
+    checkEq(label2, joined, v.mnemonic);
+
+    // Also exercise the compat convenience wrapper and confirm it agrees.
+    char words2[24][16];
+    diceseed::computeMnemonicSeedSignerCompat(v.rolls, v.roll_count, v.word_count, v.ent_bytes, v.cs_bits, words2);
+    char joined2[512];
+    joinWords(words2, v.word_count, joined2);
+    char label3[64];
+    snprintf(label3, sizeof(label3), "seedsigner_vector[%s].computeMnemonic_matches", v.name);
+    checkEq(label3, joined2, v.mnemonic);
+  }
+
+  printf("\n%d BIP39 vectors + %d dice vectors x3 checks + %d SeedSigner vectors x3 checks, %d failure(s)\n",
+         BIP39_VECTORS_COUNT, DICE_VECTORS_COUNT, SEEDSIGNER_VECTORS_COUNT, failures);
   return failures == 0 ? 0 : 1;
 }

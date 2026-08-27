@@ -69,3 +69,24 @@ static const DiceVector DICE_VECTORS[] = {
   { "random_99", ROLLS_RANDOM_99, 99, 32, 8, 24, "80a0f594d7290558852006bcc34afd489f3a2f593a6b4e7abe9d909c4ad0192a", "level amateur gown purity motion proof behind absorb rubber bottom satisfy muffin victory bless gossip estate example sting polar cancel seven gym gorilla excess" },
 };
 static const int DICE_VECTORS_COUNT = sizeof(DICE_VECTORS)/sizeof(DICE_VECTORS[0]);
+
+// SeedSigner's own published test vectors for its dice-roll entropy feature
+// (docs/dice_verification.md in SeedSigner/seedsigner, fetched verbatim --
+// these are THEIR numbers, not ours). Pin diceToEntropySeedSignerCompat()
+// against a third-party-published, independently-audited source, the same
+// role BIP39_VECTORS plays for entropyToMnemonic(). The expected entropy_hex
+// values were derived locally (sha256 of the literal roll-digit string,
+// full 32 bytes for the 24-word case / first 16 bytes for the 12-word case)
+// and cross-checked against the expected mnemonic before being trusted.
+static const uint8_t SEEDSIGNER_ROLLS_99[] = { 6,5,5,1,5,2,2,3,1,3,1,6,5,2,1,3,2,1,6,1,1,3,3,1,5,4,4,4,4,1,2,3,6,1,6,4,6,6,4,4,3,1,1,2,1,5,3,4,4,1,5,6,3,3,5,2,6,4,5,6,2,5,4,4,6,2,2,4,5,5,4,6,2,3,6,5,4,2,3,6,4,2,4,6,3,1,2,6,1,3,3,2,2,2,3,4,6,1,2 };
+static const uint8_t SEEDSIGNER_ROLLS_50[] = { 6,5,5,1,5,2,2,3,1,3,1,6,5,2,1,3,2,1,6,1,1,3,3,1,5,4,4,4,4,1,2,3,6,1,6,4,6,6,4,4,3,1,1,2,1,5,3,4,4,1 };
+
+static const DiceVector SEEDSIGNER_VECTORS[] = {
+  { "seedsigner_99", SEEDSIGNER_ROLLS_99, 99, 32, 8, 24,
+    "51531761ec7a738946e0b9f46bb11320a695495430e345c14f01ad8b3b898a6d",
+    "eyebrow obvious such suggest poet seven breeze blame virtual frown dynamic donor harsh pigeon express broccoli easy apology scatter force recipe shadow claim radio" },
+  { "seedsigner_50", SEEDSIGNER_ROLLS_50, 50, 16, 4, 12,
+    "6cb09af855050dcde6fe2adc3181c250",
+    "hole luggage safe present express tragic orbit shed switch metal identify path" },
+};
+static const int SEEDSIGNER_VECTORS_COUNT = sizeof(SEEDSIGNER_VECTORS)/sizeof(SEEDSIGNER_VECTORS[0]);

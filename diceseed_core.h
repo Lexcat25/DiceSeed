@@ -7,13 +7,16 @@
 // test exercises the exact bytes that run on hardware rather than a
 // reimplementation that could silently diverge from the firmware.
 //
-// Split into two functions on purpose, not one:
-//   diceToEntropy()    dice rolls -> raw entropy bytes (no BIP39 involved)
-//   entropyToMnemonic() entropy bytes -> checksum -> word list (pure BIP39)
+// Split into two stages on purpose, not one:
+//   diceToEntropy() / diceToEntropySeedSignerCompat()
+//                        dice rolls -> raw entropy bytes (no BIP39 involved)
+//   entropyToMnemonic()  entropy bytes -> checksum -> word list (pure BIP39)
 // entropyToMnemonic() alone can be checked against the official trezor/
 // python-mnemonic test vectors (see tests/test_core.cpp) independent of
 // whether the dice math is correct -- so a bug in one half can't hide
-// behind a passing test of the other half.
+// behind a passing test of the other half. Two dice->entropy functions,
+// selected at compile time by DiceSeed.ino via build_mode.h, share this one
+// entropyToMnemonic() -- see each function's own comment for why it exists.
 #pragma once
 
 #include <stdint.h>
@@ -76,6 +79,45 @@ inline void diceToEntropy(const uint8_t* rolls, int rollsNeeded, int entBytes,
   mbedtls_platform_zeroize(big, sizeof(big));
 }
 
+// Alternate dice->entropy method, matching SeedSigner's own dice-roll seed
+// feature byte-for-byte: hash the literal roll digits (ASCII '1'..'6', in
+// roll order, no separator, no remapping) with SHA-256, and take the low
+// `entBytes` bytes of the 32-byte digest as entropy. Verified against
+// SeedSigner's own published test vectors (docs/dice_verification.md)
+// before this was trusted -- see tests/vectors.h SEEDSIGNER_VECTORS.
+//
+// Why this exists alongside diceToEntropy(): the same physical dice rolls
+// entered on DiceSeed (built with DICESEED_COMPAT_BUILD=1, see
+// build_mode.h) and on an actual SeedSigner unit now produce the identical
+// mnemonic -- independent-hardware agreement, not just an independent
+// re-implementation of the math. The tradeoff: unlike diceToEntropy()'s
+// base-6 positional number, a SHA-256 hash cannot be recomputed by hand
+// with pencil and paper. This is not a new trust dependency, though --
+// entropyToMnemonic() below already requires SHA-256 for the BIP39
+// checksum step in EVERY DiceSeed build, classic included, so this reuses
+// the exact same already-trusted mbedtls call rather than adding one.
+inline void diceToEntropySeedSignerCompat(const uint8_t* rolls, int rollsNeeded,
+                                           int entBytes, uint8_t* entropy) {
+  char digits[99 + 1]; // rollsNeeded is 50 or 99; +1 for the NUL terminator
+  for (int i = 0; i < rollsNeeded; i++) {
+    digits[i] = '0' + rolls[i]; // rolls[i] is 1..6 -> ASCII '1'..'6'
+  }
+  digits[rollsNeeded] = '\0';
+
+  uint8_t hash[32];
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts(&ctx, 0); // 0 = SHA-256 (not SHA-224)
+  mbedtls_sha256_update(&ctx, (const uint8_t*)digits, rollsNeeded);
+  mbedtls_sha256_finish(&ctx, hash);
+  mbedtls_sha256_free(&ctx);
+
+  memcpy(entropy, hash, entBytes); // first entBytes bytes of the digest
+
+  mbedtls_platform_zeroize(digits, sizeof(digits));
+  mbedtls_platform_zeroize(hash, sizeof(hash));
+}
+
 // Standard BIP39: entropy (entBytes bytes, 16 or 32) -> SHA-256 checksum
 // (top csBits bits of the hash, 4 or 8) -> wordCount 11-bit word indices
 // (12 or 24). mnemonicWords[w] must have room for >=9 chars (the longest
@@ -115,6 +157,22 @@ inline void computeMnemonic(const uint8_t* rolls, int rollsNeeded,
                              char mnemonicWords[][16]) {
   uint8_t entropy[32];
   diceToEntropy(rolls, rollsNeeded, entBytes, entropy);
+  entropyToMnemonic(entropy, entBytes, wordCount, csBits, mnemonicWords);
+  mbedtls_platform_zeroize(entropy, sizeof(entropy));
+}
+
+// Same convenience wrapper, using the SeedSigner-compatible entropy method
+// instead. The sketch itself does NOT call either wrapper -- it needs the
+// intermediate entropy to survive for the on-screen "show raw entropy"
+// display (see DiceSeed.ino), so it calls diceToEntropy[SeedSignerCompat]()
+// and entropyToMnemonic() directly as two steps. These wrappers exist for
+// tests, to exercise the same call shape a caller who does NOT need the
+// entropy afterward would use.
+inline void computeMnemonicSeedSignerCompat(const uint8_t* rolls, int rollsNeeded,
+                                             int wordCount, int entBytes, int csBits,
+                                             char mnemonicWords[][16]) {
+  uint8_t entropy[32];
+  diceToEntropySeedSignerCompat(rolls, rollsNeeded, entBytes, entropy);
   entropyToMnemonic(entropy, entBytes, wordCount, csBits, mnemonicWords);
   mbedtls_platform_zeroize(entropy, sizeof(entropy));
 }
