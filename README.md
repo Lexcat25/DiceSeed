@@ -28,9 +28,9 @@ other — see [Build variants](#build-variants).
 ## Build variants
 
 One codebase, one repo, two firmware builds — selected by a single flag in
-`build_mode.h` (`DICESEED_COMPAT_BUILD`), because your BTC group needs a
-way to trust this tool, and two things it's already decided to trust are
-[iancoleman.io](https://iancoleman.io/bip39) and
+`build_mode.h` (`DICESEED_COMPAT_BUILD`). This exists because a local BTC
+group wanted a way to trust this tool anchored to two things they already
+trust: [iancoleman.io](https://iancoleman.io/bip39) and
 [SeedSigner](https://seedsigner.com). Everything except the dice→entropy
 step — display, buttons, wipe, wordlist, the BIP39 checksum step — is
 identical between the two; that's deliberate, so there's only one thing to
@@ -43,10 +43,10 @@ independently review twice, not two whole codebases.
 | Same rolls on a real **SeedSigner** unit | **Identical mnemonic** (verified against SeedSigner's own published test vectors) | Different mnemonic |
 | Verifiable against **iancoleman.io** | Via the on-screen raw-entropy hex (below) — not its Dice mode | Via the on-screen raw-entropy hex (below) — not its Dice mode |
 
-Neither variant is "more correct" — pick based on which property your group
-cares about more for a given device. **Compat is the default** because the
-point of a group standardizing on this device is cross-checkable output,
-and that should be what people get without touching anything; someone who
+Neither variant is "more correct" — pick based on which property matters
+more for a given device. **Compat is the default** because the point of a
+group standardizing on this device is cross-checkable output, and that
+should be what people get without touching anything; someone who
 specifically wants to redo the whole derivation by hand wants **classic**
 instead.
 
@@ -168,10 +168,10 @@ tests/run_tests.sh
 ```
 
 The **compat** build is additionally checked against SeedSigner's own
-published dice test vectors (`docs/dice_verification.md` in
-`SeedSigner/seedsigner`) — not retyped by hand, verified byte-for-byte via
-an independent Python computation before being trusted, same standard as
-every other vector set in this repo.
+published [dice test vectors](https://github.com/SeedSigner/seedsigner/blob/main/docs/dice_verification.md) —
+not retyped by hand, verified byte-for-byte via an independent Python
+computation before being trusted, same standard as every other vector set
+in this repo.
 
 Run `tests/run_tests.sh` after touching `diceseed_core.h`, `bip39_wordlist.h`,
 or `tests/vectors.h`.
