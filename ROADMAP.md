@@ -5,27 +5,39 @@ release date — this is the "not done yet, but on the radar" list. Each item
 came out of asking what an experienced firmware dev or a security-minded
 Bitcoin user would push back on, and taking the pushback seriously.
 
-## 1. Runtime build-mode toggle
+## 1. Runtime build-mode toggle — OPEN QUESTION, not yet decided
 
 Switching between the **compat** and **classic** entropy derivations (see
 the README's *Build variants* section) currently means editing
 `build_mode.h` and reflashing, which requires a working Arduino toolchain.
-Fine for a maintainer keeping several boards in sync; needless friction for
-an end user, and the kind of thing that makes a security tool look like a
-dev artifact rather than a finished device.
 
-**Plan:** move `DICESEED_COMPAT_BUILD` from a compile-time flag to a choice
-on the start-menu screen, defaulting to compat, with the active mode shown
-on the result screen next to the version string. The two derivations
-already differ by exactly one function, so both paths get compiled in and
-selected at runtime.
+**This is deliberately parked pending a decision by the project's Bitcoin
+group** — there are two defensible positions and it's a judgement call about
+what the device is for, not a technical problem to solve. Both are recorded
+here so whoever decides has the actual argument in front of them.
 
-**Tradeoff accepted:** one binary then carries both derivations, slightly
-enlarging the per-build audit surface. Judged worth it — both paths already
-live in the repo and are already tested, so "review both" is already the
-reality; the flag only ever decided which one shipped. Keep the
-compile-time flag working as an override, so a single-path build stays
-possible for anyone who wants the smaller surface.
+**The case for a runtime toggle:** requiring an Arduino toolchain to switch
+modes is needless friction for an end user, and reads as dev artifact rather
+than finished device. Most people expect "flash once, pick the mode in the
+UI." Implementation would move `DICESEED_COMPAT_BUILD` to a start-menu
+choice defaulting to compat, with the active mode displayed on the result
+screen next to the version string, and the compile-time flag kept as an
+override for anyone wanting a single-path build.
+
+**The case for keeping it compile-time:** with one binary carrying both
+derivations, the *same dice rolls can produce a different mnemonic*
+depending on which menu option was selected that session — on a device whose
+entire value proposition is that the same input always gives the same
+output. Compile-time means one physical device has exactly one permanent,
+verifiable behavior, and the on-screen version string
+(`vX.Y.Z-compat` / `-classic`) is an unambiguous record of what that device
+does. A runtime menu trades that guarantee for convenience. Showing the
+active mode on the result screen mitigates this but does not eliminate it.
+
+**Also weigh:** one binary carrying both paths slightly enlarges the
+per-build audit surface — though both paths already live in the repo and are
+already tested, so "review both" is arguably already the reality; the flag
+only ever decided which one shipped.
 
 ## 2. Reproducible builds + published binary hashes
 

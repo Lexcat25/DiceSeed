@@ -276,9 +276,11 @@ screen** (see [Using it](#using-it), step 4):
 
 ## Roadmap
 
-Planned hardening and UX work — runtime build-mode toggle, reproducible
-builds with published binary hashes, and signed releases — is tracked in
-[`ROADMAP.md`](ROADMAP.md).
+Planned hardening and UX work — reproducible builds with published binary
+hashes, and signed releases — is tracked in [`ROADMAP.md`](ROADMAP.md),
+along with one open design question (whether the compat/classic build mode
+should become a runtime menu choice instead of a compile-time flag) that is
+deliberately undecided.
 
 ## License
 
