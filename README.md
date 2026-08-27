@@ -117,7 +117,17 @@ though nothing about it is visible from a successful build log.
 3. After the last roll, the mnemonic is shown, four words per screen
    (button 2: next page). A red warning appears if every single roll came
    back identical — a sanity check, not a hard stop.
-4. **Button 1** on this screen toggles to a **raw entropy (hex)** view —
+4. After the last word page, button 2 leads into a **3-step backup check**
+   instead of wrapping back to page 1: it re-displays word #3, #7, and #11
+   (12-word) or #6, #14, and #22 (24-word) one at a time — spread roughly
+   beginning/middle/end of the phrase — so you can check each against what
+   you actually wrote down. This isn't a blind quiz (there's no keyboard on
+   this device to type an answer into); it's a targeted re-check of the
+   transcription itself, which is one of the most common real ways a
+   written-down backup ends up wrong. Button 2 advances through the 3
+   checks, then returns to page 1.
+5. **Button 1** on the result screen (word pages or the verify check)
+   toggles to a **raw entropy (hex)** view —
    the intermediate bytes your rolls produced, before the BIP39 checksum
    and word lookup. Paste that hex into any BIP39 tool's raw entropy field
    (iancoleman.io: the **Hex [0-9A-F]** option, not its Dice mode — see
@@ -125,7 +135,7 @@ though nothing about it is visible from a successful build log.
    independently confirm the mnemonic, regardless of which build produced
    it. It's exactly as sensitive as the mnemonic itself — treat viewing it
    with the same care.
-5. **Hold both buttons for 2 seconds** to wipe RAM and reset back to the
+6. **Hold both buttons for 2 seconds** to wipe RAM and reset back to the
    menu. This is the only way to leave the result screen; there's no
    "start a new one without wiping" shortcut, deliberately.
 
@@ -221,6 +231,12 @@ screen** (see [Using it](#using-it), step 4):
   SeedSigner's exactly, so the resulting mnemonic should be identical.
   This is the strongest check available: two independently-developed,
   separately-audited implementations agreeing from the same raw input.
+
+## Roadmap
+
+Planned hardening and UX work — runtime build-mode toggle, reproducible
+builds with published binary hashes, signed releases, and a consolidated
+threat-model section — is tracked in [`ROADMAP.md`](ROADMAP.md).
 
 ## License
 
