@@ -61,9 +61,26 @@ especially if you're maintaining both builds across multiple boards.
 
 ## Build & flash
 
-Confirmed working on real hardware (display renders correctly) as of v1.2.0
-(classic build; v2.0.0's compat build shares the exact same TFT/board setup
-and hasn't changed anything this section covers).
+Confirmed working on real hardware as of v1.2.0 (display renders correctly)
+and v2.0.1 (compat build's entropy matched both SeedSigner and iancoleman.io
+on the same rolls; the two-button wipe hold works correctly — a v2.0.0
+regression in that gesture was found and fixed in v2.0.1, see the version
+history in `DiceSeed.ino`). Also confirmed working unmodified on the
+touch-screen variant of the board (touch input itself isn't used yet).
+
+**Getting the code onto disk, if you're not using `git clone`:** GitHub's
+"Download ZIP" (from the repo page or a Release) extracts to a folder named
+`DiceSeed-<version>` or `DiceSeed-main`, not `DiceSeed`. Arduino requires a
+sketch's `.ino` to sit in a folder with the *exact same name* — if that
+doesn't match, opening `DiceSeed.ino` makes the IDE "helpfully" create a
+correctly-named `DiceSeed` subfolder and move **only the `.ino`** into it,
+stranding `build_mode.h`, `diceseed_core.h`, `bip39_wordlist.h`, and
+`tft_setup.h` one level up, outside the folder the compiler actually looks
+in — a `fatal error: build_mode.h: No such file or directory` that has
+nothing to do with your setup. **Rename the extracted folder to exactly
+`DiceSeed` before opening anything in the IDE**, and this never happens.
+`git clone https://github.com/Lexcat25/DiceSeed.git` sidesteps it
+entirely, since the cloned folder is already named `DiceSeed`.
 
 1. Install [Arduino IDE](https://www.arduino.cc/en/software) (2.x) or
    [`arduino-cli`](https://arduino.github.io/arduino-cli/).

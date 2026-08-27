@@ -104,8 +104,34 @@
 //                         they already trust (iancoleman.io, SeedSigner)
 //                         without giving up the original hand-auditable
 //                         build for people who want that property instead.
+//                         Confirmed on real hardware: compat build matches
+//                         both SeedSigner and iancoleman.io on the same
+//                         rolls (2026-08-27).
+//   2.0.1 (2026-08-27) - Fixed a REGRESSION: the two-button wipe hold had
+//                         worked fine before v2.0.0 (confirmed -- it was
+//                         tested and used on real hardware previously) and
+//                         broke when v2.0.0 added the raw-entropy view
+//                         toggle. Root cause: starting a two-button hold
+//                         means pressing BTN1 down first (or very close to
+//                         it), and v2.0.0 fired the entropy-view toggle
+//                         (a full-screen redraw) unconditionally on BTN1's
+//                         press edge -- disrupting the exact moment you're
+//                         bringing BTN2 down too. Fixed by deciding BTN1's
+//                         meaning at RELEASE instead of press: it's only
+//                         treated as a view-toggle tap if BTN2 never also
+//                         went down while BTN1 was held, so a genuine
+//                         two-button hold never triggers a redraw at all.
+//                         Also hardened the hold TIMER itself as a
+//                         separate, defensive fix: it used to reset to
+//                         zero on the very first sample where either
+//                         button read not-pressed, with zero tolerance for
+//                         contact bounce -- GPIO0 also carries the
+//                         boot-strap role and is noisier than a plain
+//                         GPIO, so this is now debounced (150ms) the same
+//                         way the press side already was. Reported from
+//                         real hardware (the touch-variant board).
 
-#define FIRMWARE_VERSION_BASE "2.0.0"
+#define FIRMWARE_VERSION_BASE "2.0.1"
 
 #include "build_mode.h"
 #include "tft_setup.h" // must precede <TFT_eSPI.h> -- see that file for why
@@ -191,8 +217,11 @@ int currentRollIndex = 0;
 uint8_t currentFace = 1;
 int resultPage = 0;
 unsigned long bothDownSince = 0;
+unsigned long bothUpSince = 0;  // debounces the RELEASE of the wipe-hold gesture
 bool allRollsIdentical = false; // sanity flag: every roll came out the same face
 bool showingEntropy = false;    // result-screen sub-view: words vs raw entropy hex
+bool btn1WasDown = false;       // result-screen BTN1 edge tracking (independent
+bool btn1PureTap = false;       // of button1Pressed() -- see SCR_RESULT for why
 
 void drawMenu() {
   tft.fillScreen(TFT_BLACK);
@@ -410,6 +439,8 @@ void loop() {
           mbedtls_platform_zeroize(rolls, sizeof(rolls));
           resultPage = 0;
           showingEntropy = false;
+          btn1WasDown = false;
+          btn1PureTap = false;
           screen = SCR_RESULT;
           drawResult();
         } else {
@@ -428,6 +459,7 @@ void loop() {
       bool b1 = (digitalRead(PIN_BUTTON_1) == LOW);
       bool b2 = (digitalRead(PIN_BUTTON_2) == LOW);
       if (b1 && b2) {
+        bothUpSince = 0; // solidly down again; cancel any pending release
         if (bothDownSince == 0) bothDownSince = millis();
         if (millis() - bothDownSince >= 2000) {
           screen = SCR_WIPE_CONFIRM;
@@ -444,14 +476,37 @@ void loop() {
           delay(300); // let the pin settle high before the reset samples it
           esp_restart();
         }
-      } else {
-        bothDownSince = 0;
+      } else if (bothDownSince != 0) {
+        // Debounce the RELEASE, not just the press: GPIO0 also carries the
+        // boot-strap role, which makes it noisier than a plain GPIO, so a
+        // single bounced sample here used to zero the whole 2-second timer
+        // instantly -- on a noisy button that can mean the hold never
+        // accumulates to 2s at all (reported on the touch board, 2026-08).
+        // Require the release to hold for 150ms before treating it as
+        // real, so a momentary bounce mid-hold doesn't restart the count.
+        if (bothUpSince == 0) bothUpSince = millis();
+        if (millis() - bothUpSince >= 150) {
+          bothDownSince = 0;
+          bothUpSince = 0;
+        }
       }
 
-      if (button1Pressed()) {
+      // Decide BTN1's meaning at RELEASE, not at press, and only call it a
+      // view-toggle tap if BTN2 never also went down while BTN1 was held.
+      // v2.0.0 fired the toggle+redraw on BTN1's press edge unconditionally
+      // (via button1Pressed()) -- but starting a two-button hold means
+      // pressing BTN1 down first (or very close to it), so that redraw
+      // could fire in the exact moment you're bringing BTN2 down too,
+      // disrupting the gesture itself. Waiting until release, and voiding
+      // the tap the instant BTN2 joins in, means a genuine hold attempt
+      // never triggers a redraw at all.
+      if (b1 && !btn1WasDown) btn1PureTap = true;   // BTN1 just went down
+      if (b1 && b2) btn1PureTap = false;            // BTN2 joined -> not a tap
+      if (!b1 && btn1WasDown && btn1PureTap) {      // BTN1 just released, clean
         showingEntropy = !showingEntropy;
         showingEntropy ? drawEntropy() : drawResult();
       }
+      btn1WasDown = b1;
 
       int ev = button2Event();
       if (ev == 1 && !showingEntropy) {
