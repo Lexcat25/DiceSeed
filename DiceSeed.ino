@@ -132,17 +132,25 @@
 //                         real hardware (the touch-variant board).
 //   2.1.0 (2026-08-27) - Added a backup-verification pass after the last
 //                         word page: instead of wrapping straight back to
-//                         page 1, the result screen now re-displays 3
-//                         specific word numbers (spread ~25%/60%/90%
-//                         through the mnemonic, so it works the same
-//                         shape for 12 or 24 words) one at a time, asking
-//                         you to check each against what you wrote down.
-//                         Not a blind recall quiz -- there's no keyboard
-//                         on this device to type an answer into -- just a
-//                         targeted re-check of the transcription itself,
-//                         which is one of the most common real ways a
-//                         seed-phrase backup goes wrong. BTN1 still opens
-//                         the raw-entropy view from here (and cancels an
+//                         page 1, the result screen quizzes 3 checkpoint
+//                         words (spread ~25%/60%/90% through the mnemonic,
+//                         so it works the same shape for 12 or 24 words).
+//                         First cut just re-displayed the correct word for
+//                         you to eyeball against your paper copy -- tested
+//                         on real hardware the same day and correctly
+//                         flagged (by Justin's BTC group) as too weak: it
+//                         could only catch "I copied it right, let me
+//                         double check," not "I misread it and wrote down
+//                         the wrong word confidently." Reworked into a
+//                         genuine blind multiple-choice pick instead: the
+//                         real word plus 2 decoys (chosen with esp_random()
+//                         -- confirmed to have no side effects on other
+//                         subsystems, unlike WiFi.mode(); irrelevant here
+//                         anyway since decoy selection has zero security
+//                         requirement), cycle with BTN1, lock in with BTN2,
+//                         told right/wrong before moving to the next
+//                         checkpoint. BTN1 still opens the raw-entropy view
+//                         when not actively picking (and cancels an
 //                         in-progress verify pass); the wipe-hold gesture
 //                         is unaffected and works from any sub-view.
 
@@ -173,6 +181,13 @@ static char mnemonicWords[24][16];        // resulting words, plain text
 static uint8_t entropyBytes[32];          // intermediate entropy, kept for
                                            // the raw-entropy display (as
                                            // sensitive as mnemonicWords)
+static char verifyChoices[3][16];         // current verify step's 3 choices
+                                           // (1 real word, 2 decoys) -- as
+                                           // sensitive as mnemonicWords;
+                                           // declared here (not with the
+                                           // rest of the verify state below)
+                                           // so scrubSensitiveRAM() above
+                                           // can reference it
 
 int wordCount = 0;          // 12 or 24, chosen at runtime
 int rollsNeeded = 0;        // 50 or 99
@@ -191,11 +206,14 @@ void scrubSensitiveRAM() {
   mbedtls_platform_zeroize(rolls, sizeof(rolls));
   mbedtls_platform_zeroize(mnemonicWords, sizeof(mnemonicWords));
   mbedtls_platform_zeroize(entropyBytes, sizeof(entropyBytes));
+  mbedtls_platform_zeroize(verifyChoices, sizeof(verifyChoices));
   // The BIP39 checksum step's own scratch space is function-local inside
   // diceseed_core.h and zeroizes itself before returning. entropyBytes
   // above is different: it's kept as a global (v2.0.0) specifically so the
   // result screen can display it, so it needs the same lifetime and the
-  // same scrub treatment as mnemonicWords.
+  // same scrub treatment as mnemonicWords. verifyChoices (v2.1.0) gets the
+  // same treatment for the same reason: one of its 3 slots is a real
+  // mnemonic word, not just a decoy.
 }
 
 // ---- Buttons (active LOW, simple debounce) ---------------------------------
@@ -240,6 +258,10 @@ bool btn1PureTap = false;       // of button1Pressed() -- see SCR_RESULT for why
 bool verifying = false;         // result-screen sub-view: backup-verification quiz
 int verifyStep = 0;             // which of the 3 verify checkpoints we're on
 uint8_t verifyWordNums[3];      // 1-based word numbers to spot-check this session
+int verifyChoiceIdx = 0;        // which of the 3 is currently displayed
+int verifyCorrectSlot = 0;      // which slot (0-2) holds the real word
+bool verifyAnswered = false;    // false = picking, true = showing right/wrong
+bool verifyWasCorrect = false;  // set once, when the pick is locked in
 
 void drawMenu() {
   tft.fillScreen(TFT_BLACK);
@@ -360,12 +382,63 @@ void pickVerifyWords() {
   }
 }
 
-// Re-displays one specific word for the user to check against their
-// written-down copy -- not a blind recall quiz (no keyboard on this
-// device to type an answer into), just a targeted, honest re-check of
-// the transcription itself, which is one of the most common real ways a
-// backup actually goes wrong.
-void drawVerify() {
+// Fills out[0]/out[1] with two DECOY word indices into BIP39_WORDS --
+// distinct from each other, from the correct word, and from every OTHER
+// word already in this mnemonic (so a decoy never happens to be one of
+// your other real words, which would be needlessly confusing). Uses the
+// chip's hardware RNG (esp_random()) purely to choose which WRONG words to
+// display: this is NOT part of the entropy/mnemonic path in any way, and
+// unlike WiFi.mode() (see the v1.1.0 history above), esp_random() is
+// confirmed to have no side effects on other subsystems -- it never
+// touches the radio or NVS, and always returns usable output (worst case
+// "pseudo-random only" quality with no RF active, which is completely
+// fine here: a decoy just needs to be a different word, not unpredictable
+// in any cryptographic sense).
+void pickDecoyIndices(const char* correctWord, uint16_t out[2]) {
+  for (int slot = 0; slot < 2; slot++) {
+    uint16_t candidate;
+    bool ok;
+    do {
+      candidate = esp_random() % 2048;
+      ok = (strcmp(BIP39_WORDS[candidate], correctWord) != 0);
+      if (ok && slot == 1 && candidate == out[0]) ok = false;
+      for (int i = 0; ok && i < wordCount; i++) {
+        if (strcmp(BIP39_WORDS[candidate], mnemonicWords[i]) == 0) ok = false;
+      }
+    } while (!ok);
+    out[slot] = candidate;
+  }
+}
+
+// Sets up one verify checkpoint: picks 2 decoys, places the real word in a
+// randomly chosen slot among 3, and starts the display on a random slot
+// too (so there's no learnable "the answer is always slot 1" pattern).
+void startVerifyStep() {
+  const char* correctWord = mnemonicWords[verifyWordNums[verifyStep] - 1];
+  uint16_t decoys[2];
+  pickDecoyIndices(correctWord, decoys);
+
+  verifyCorrectSlot = esp_random() % 3;
+  int d = 0;
+  for (int slot = 0; slot < 3; slot++) {
+    const char* word = (slot == verifyCorrectSlot) ? correctWord : BIP39_WORDS[decoys[d++]];
+    strncpy(verifyChoices[slot], word, 15);
+    verifyChoices[slot][15] = '\0';
+  }
+  verifyChoiceIdx = esp_random() % 3;
+  verifyAnswered = false;
+  drawVerifyPicking();
+}
+
+// A blind multiple-choice pick, not a "here's the answer, compare it
+// yourself" re-display: the word list is gone, and this is the one
+// candidate currently selected out of 3 (1 real, 2 decoys). This is what
+// catches "I misread the word the first time and wrote down the wrong
+// one confidently" -- the earlier re-display design could only catch
+// "I copied it correctly, let me double check," which is a materially
+// weaker guarantee (this is the exact tradeoff Justin's BTC group flagged
+// after testing v2.1.0's original re-display version on real hardware).
+void drawVerifyPicking() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.setTextSize(2);
@@ -374,19 +447,45 @@ void drawVerify() {
   tft.print(verifyStep + 1);
   tft.print("/3)");
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setCursor(10, 45);
+  tft.setCursor(10, 35);
   tft.print("Word #");
   tft.print(verifyWordNums[verifyStep]);
-  tft.println(" is:");
+  tft.println(" was:");
   tft.setTextSize(3);
-  tft.setCursor(10, 80);
-  tft.print(mnemonicWords[verifyWordNums[verifyStep] - 1]);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setCursor(10, 75);
+  tft.print(verifyChoices[verifyChoiceIdx]);
   tft.setTextSize(1);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.setCursor(10, 130);
-  tft.println("Check this against what you wrote down.");
+  tft.println("Pick the word you actually wrote down.");
   tft.setCursor(10, 142);
-  tft.println("BTN2 tap: next   BTN1 tap: raw entropy");
+  tft.println("BTN1: cycle choices   BTN2: select this one");
+  tft.setCursor(10, 155);
+  tft.println("Hold BOTH buttons 2s: WIPE + reset");
+}
+
+void drawVerifyResult() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 5);
+  if (verifyWasCorrect) {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.println("Correct!");
+  } else {
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.println("Not quite --");
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(10, 35);
+    tft.print("word #");
+    tft.print(verifyWordNums[verifyStep]);
+    tft.print(" was ");
+    tft.println(verifyChoices[verifyCorrectSlot]);
+  }
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setCursor(10, 142);
+  tft.println(verifyStep + 1 < 3 ? "BTN2 tap: next check" : "BTN2 tap: back to word list");
   tft.setCursor(10, 155);
   tft.println("Hold BOTH buttons 2s: WIPE + reset");
 }
@@ -569,27 +668,41 @@ void loop() {
       // disrupting the gesture itself. Waiting until release, and voiding
       // the tap the instant BTN2 joins in, means a genuine hold attempt
       // never triggers a redraw at all.
+      // While actively picking an answer (verifying && !verifyAnswered),
+      // BTN1 cycles the displayed choice instead of its usual meaning --
+      // it's only ever "open the entropy view" outside that one state.
+      bool picking = verifying && !verifyAnswered;
       if (b1 && !btn1WasDown) btn1PureTap = true;   // BTN1 just went down
       if (b1 && b2) btn1PureTap = false;            // BTN2 joined -> not a tap
       if (!b1 && btn1WasDown && btn1PureTap) {      // BTN1 just released, clean
-        verifying = false; // leaving the verify quiz if we were mid-pass
-        showingEntropy = !showingEntropy;
-        showingEntropy ? drawEntropy() : drawResult();
+        if (picking) {
+          verifyChoiceIdx = (verifyChoiceIdx + 1) % 3;
+          drawVerifyPicking();
+        } else {
+          verifying = false; // leaving the verify quiz if we were mid-pass
+          showingEntropy = !showingEntropy;
+          showingEntropy ? drawEntropy() : drawResult();
+        }
       }
       btn1WasDown = b1;
 
       int ev = button2Event();
       if (ev == 1 && !showingEntropy) {
-        if (verifying) {
+        if (verifying && !verifyAnswered) {
+          // Lock in the currently-displayed choice.
+          verifyAnswered = true;
+          verifyWasCorrect = (verifyChoiceIdx == verifyCorrectSlot);
+          drawVerifyResult();
+        } else if (verifying) {
+          // Already showed right/wrong -- move to the next checkpoint,
+          // or finish the quiz and return to the word list.
           verifyStep++;
           if (verifyStep >= 3) {
-            // Quiz done -- back to the word list, same as the old
-            // wrap-to-page-1 behavior, just with the quiz inserted first.
             verifying = false;
             resultPage = 0;
             drawResult();
           } else {
-            drawVerify();
+            startVerifyStep();
           }
         } else {
           int perPage = 4;
@@ -602,7 +715,7 @@ void loop() {
             // instead of just wrapping straight away.
             verifying = true;
             verifyStep = 0;
-            drawVerify();
+            startVerifyStep();
           }
         }
       }

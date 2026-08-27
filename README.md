@@ -92,12 +92,13 @@ especially if you're maintaining both builds across multiple boards.
 
 ## Build & flash
 
-Confirmed working on real hardware as of v1.2.0 (display renders correctly)
-and v2.0.1 (compat build's entropy matched both SeedSigner and iancoleman.io
-on the same rolls; the two-button wipe hold works correctly — a v2.0.0
+Confirmed working on real hardware as of v1.2.0 (display renders correctly),
+v2.0.1 (compat build's entropy matched both SeedSigner and iancoleman.io on
+the same rolls; the two-button wipe hold works correctly — a v2.0.0
 regression in that gesture was found and fixed in v2.0.1, see the version
-history in `DiceSeed.ino`). Also confirmed working unmodified on the
-touch-screen variant of the board (touch input itself isn't used yet).
+history in `DiceSeed.ino`), and v2.1.0 (the backup-verification quiz). Also
+confirmed working unmodified on the touch-screen variant of the board (touch
+input itself isn't used yet).
 
 **Getting the code onto disk, if you're not using `git clone`:** GitHub's
 "Download ZIP" (from the repo page or a Release) extracts to a folder named
@@ -148,16 +149,20 @@ though nothing about it is visible from a successful build log.
 3. After the last roll, the mnemonic is shown, four words per screen
    (button 2: next page). A red warning appears if every single roll came
    back identical — a sanity check, not a hard stop.
-4. After the last word page, button 2 leads into a **3-step backup check**
-   instead of wrapping back to page 1: it re-displays word #3, #7, and #11
-   (12-word) or #6, #14, and #22 (24-word) one at a time — spread roughly
-   beginning/middle/end of the phrase — so you can check each against what
-   you actually wrote down. This isn't a blind quiz (there's no keyboard on
-   this device to type an answer into); it's a targeted re-check of the
-   transcription itself, which is one of the most common real ways a
-   written-down backup ends up wrong. Button 2 advances through the 3
-   checks, then returns to page 1.
-5. **Button 1** on the result screen (word pages or the verify check)
+4. After the last word page, button 2 leads into a **3-step backup quiz**
+   instead of wrapping back to page 1, spot-checking word #3, #7, and #11
+   (12-word) or #6, #14, and #22 (24-word) — spread roughly
+   beginning/middle/end of the phrase. Each check shows one candidate word
+   at a time out of 3 (the real word plus 2 decoys); cycle through them
+   with button 1, lock in your pick with button 2, and it tells you
+   right/wrong before moving to the next checkpoint. This is a genuine
+   blind pick, not a "here's the answer, compare it yourself" re-display —
+   it's meant to catch "I misread the word and wrote down the wrong one
+   confidently," not just "did I copy it correctly," which is the more
+   common and more serious way a written-down backup actually goes wrong.
+   After the 3rd checkpoint it returns to page 1.
+5. **Button 1** on the result screen (word pages, or between quiz
+   checkpoints once you've locked in an answer)
    toggles to a **raw entropy (hex)** view —
    the intermediate bytes your rolls produced, before the BIP39 checksum
    and word lookup. Paste that hex into any BIP39 tool's raw entropy field
@@ -180,7 +185,13 @@ though nothing about it is visible from a successful build log.
   `memset`, which a compiler can optimize away as a dead store) at boot and
   before the wipe-triggered reset. This now includes the raw entropy buffer
   (kept in RAM for the hex display above), not just the rolls and mnemonic.
-- Entropy comes **only** from the dice rolls you enter.
+- Entropy comes **only** from the dice rolls you enter. The one place this
+  device's hardware RNG (`esp_random()`) is used at all is picking which
+  *wrong* words to show as decoys in the backup-verification quiz below —
+  that has no bearing on the mnemonic itself and isn't part of the entropy
+  path in any sense; it's confirmed to have no side effects on other
+  subsystems either (unlike `WiFi.mode()`, see the wordier history in
+  `DiceSeed.ino`).
 - The **compat** build's use of SHA-256 for the entropy step isn't a new
   trust dependency: the BIP39 checksum step requires SHA-256 in *every*
   build, classic included, so compat just reuses that exact same
