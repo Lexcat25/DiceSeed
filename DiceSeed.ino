@@ -130,8 +130,23 @@
 //                         GPIO, so this is now debounced (150ms) the same
 //                         way the press side already was. Reported from
 //                         real hardware (the touch-variant board).
+//   2.1.0 (2026-08-27) - Added a backup-verification pass after the last
+//                         word page: instead of wrapping straight back to
+//                         page 1, the result screen now re-displays 3
+//                         specific word numbers (spread ~25%/60%/90%
+//                         through the mnemonic, so it works the same
+//                         shape for 12 or 24 words) one at a time, asking
+//                         you to check each against what you wrote down.
+//                         Not a blind recall quiz -- there's no keyboard
+//                         on this device to type an answer into -- just a
+//                         targeted re-check of the transcription itself,
+//                         which is one of the most common real ways a
+//                         seed-phrase backup goes wrong. BTN1 still opens
+//                         the raw-entropy view from here (and cancels an
+//                         in-progress verify pass); the wipe-hold gesture
+//                         is unaffected and works from any sub-view.
 
-#define FIRMWARE_VERSION_BASE "2.0.1"
+#define FIRMWARE_VERSION_BASE "2.1.0"
 
 #include "build_mode.h"
 #include "tft_setup.h" // must precede <TFT_eSPI.h> -- see that file for why
@@ -222,6 +237,9 @@ bool allRollsIdentical = false; // sanity flag: every roll came out the same fac
 bool showingEntropy = false;    // result-screen sub-view: words vs raw entropy hex
 bool btn1WasDown = false;       // result-screen BTN1 edge tracking (independent
 bool btn1PureTap = false;       // of button1Pressed() -- see SCR_RESULT for why
+bool verifying = false;         // result-screen sub-view: backup-verification quiz
+int verifyStep = 0;             // which of the 3 verify checkpoints we're on
+uint8_t verifyWordNums[3];      // 1-based word numbers to spot-check this session
 
 void drawMenu() {
   tft.fillScreen(TFT_BLACK);
@@ -317,10 +335,58 @@ void drawResult() {
   if ((resultPage + 1) < totalPages) {
     tft.println("BTN2 tap: next page");
   } else {
-    tft.println("BTN2 tap: back to page 1");
+    tft.println("BTN2 tap: verify backup");
   }
   tft.setCursor(10, 142);
   tft.println("BTN1 tap: show raw entropy (hex)");
+  tft.setCursor(10, 155);
+  tft.println("Hold BOTH buttons 2s: WIPE + reset");
+}
+
+// Fills verifyWordNums with 3 checkpoint word numbers (1-based), spread
+// roughly beginning/middle/end regardless of word count, so the check
+// works the same shape whether the mnemonic is 12 or 24 words. Fixed
+// absolute numbers like "3, 8, 12" only make sense for one word count;
+// these are proportional (~25%/60%/90%) and rounded to the nearest word
+// with integer math (n*pct+50)/100, which matches round-to-nearest --
+// e.g. 12 words -> 3, 7, 11; 24 words -> 6, 14, 22.
+void pickVerifyWords() {
+  const int pct[3] = { 25, 60, 90 };
+  for (int i = 0; i < 3; i++) {
+    int n = (wordCount * pct[i] + 50) / 100;
+    if (n < 1) n = 1;
+    if (n > wordCount) n = wordCount;
+    verifyWordNums[i] = (uint8_t)n;
+  }
+}
+
+// Re-displays one specific word for the user to check against their
+// written-down copy -- not a blind recall quiz (no keyboard on this
+// device to type an answer into), just a targeted, honest re-check of
+// the transcription itself, which is one of the most common real ways a
+// backup actually goes wrong.
+void drawVerify() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 5);
+  tft.print("Verify backup (");
+  tft.print(verifyStep + 1);
+  tft.print("/3)");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 45);
+  tft.print("Word #");
+  tft.print(verifyWordNums[verifyStep]);
+  tft.println(" is:");
+  tft.setTextSize(3);
+  tft.setCursor(10, 80);
+  tft.print(mnemonicWords[verifyWordNums[verifyStep] - 1]);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setCursor(10, 130);
+  tft.println("Check this against what you wrote down.");
+  tft.setCursor(10, 142);
+  tft.println("BTN2 tap: next   BTN1 tap: raw entropy");
   tft.setCursor(10, 155);
   tft.println("Hold BOTH buttons 2s: WIPE + reset");
 }
@@ -441,6 +507,9 @@ void loop() {
           showingEntropy = false;
           btn1WasDown = false;
           btn1PureTap = false;
+          verifying = false;
+          verifyStep = 0;
+          pickVerifyWords();
           screen = SCR_RESULT;
           drawResult();
         } else {
@@ -503,6 +572,7 @@ void loop() {
       if (b1 && !btn1WasDown) btn1PureTap = true;   // BTN1 just went down
       if (b1 && b2) btn1PureTap = false;            // BTN2 joined -> not a tap
       if (!b1 && btn1WasDown && btn1PureTap) {      // BTN1 just released, clean
+        verifying = false; // leaving the verify quiz if we were mid-pass
         showingEntropy = !showingEntropy;
         showingEntropy ? drawEntropy() : drawResult();
       }
@@ -510,10 +580,31 @@ void loop() {
 
       int ev = button2Event();
       if (ev == 1 && !showingEntropy) {
-        int perPage = 4;
-        int totalPages = (wordCount + perPage - 1) / perPage;
-        resultPage = (resultPage + 1) % totalPages;
-        drawResult();
+        if (verifying) {
+          verifyStep++;
+          if (verifyStep >= 3) {
+            // Quiz done -- back to the word list, same as the old
+            // wrap-to-page-1 behavior, just with the quiz inserted first.
+            verifying = false;
+            resultPage = 0;
+            drawResult();
+          } else {
+            drawVerify();
+          }
+        } else {
+          int perPage = 4;
+          int totalPages = (wordCount + perPage - 1) / perPage;
+          if (resultPage + 1 < totalPages) {
+            resultPage++;
+            drawResult();
+          } else {
+            // Last word page -- verify before wrapping back to page 1,
+            // instead of just wrapping straight away.
+            verifying = true;
+            verifyStep = 0;
+            drawVerify();
+          }
+        }
       }
       break;
     }

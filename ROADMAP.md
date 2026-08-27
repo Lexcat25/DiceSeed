@@ -51,22 +51,10 @@ With item 2, this lets someone verify "this binary is what the maintainer
 built from this reviewed source" without trusting GitHub's infrastructure
 or their own toolchain.
 
-## 4. Explicit threat-model / "what this is for" section in the README
+## 4. Explicit threat-model / "what this is for" section in the README — DONE (2026-08-27)
 
-Consolidate things the README already says in scattered places into one
-honest paragraph a first-time reader sees *before* deciding to trust the
-device:
-
-- DiceSeed is a **generator** — it makes a seed phrase from entropy you
-  supply and can verify. It is not a signer and not a wallet.
-- Intended flow: generate on battery power with no USB attached, write the
-  phrase down, verify it (backup check + optional cross-check), then load
-  it into a proper hardware signer for actual custody.
-- It is **not** a substitute for a Coldcard / SeedSigner / Jade for holding
-  funds. The USB-Serial-JTAG peripheral can dump RAM (already in the
-  Security model section); a device that stores nothing and signs nothing
-  is a smaller target only because it does less.
-- The radios: the ESP32-S3 has WiFi/BT silicon physically present. This
-  firmware never initializes either — but "no radio in the firmware" is not
-  "no radio on the board," and someone who needs the latter wants a
-  different device.
+Added as *What DiceSeed is for (and what it isn't)*, near the top of the
+README: generator not signer/wallet, the battery-power intended flow, the
+JTAG RAM-dump caveat, and the radios-are-on-the-board-even-if-not-in-the-
+firmware point — consolidated from things the README already said in
+scattered places.

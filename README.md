@@ -9,6 +9,37 @@ the firmware turns your rolls into a standard 12- or 24-word BIP39 mnemonic —
 the same kind of phrase a hardware wallet shows you, generated from entropy
 *you* supplied and can audit, not a hardware RNG you have to trust blindly.
 
+## What DiceSeed is for (and what it isn't)
+
+DiceSeed is a **generator**: it turns entropy you supplied and can audit
+into a standard BIP39 phrase. It is not a signer, not a wallet, and not a
+place to keep anything.
+
+The intended flow is: run it **on battery power with no USB cable
+attached**, roll and enter your dice, write the phrase down, verify it
+(the built-in backup check, plus an optional
+[cross-check](#cross-checking-your-output)), then load that phrase into a
+proper hardware signer for actual custody. Once you've written the phrase
+down and wiped the device, DiceSeed has no further role.
+
+It is **not** a substitute for a Coldcard / SeedSigner / Blockstream Jade
+when it comes to holding funds:
+
+- The T-Display S3's USB port is a native USB-Serial-JTAG peripheral,
+  enabled in silicon, so anyone with a cable and OpenOCD can halt the CPU
+  and read RAM while a phrase is on screen (see
+  [Security model](#security-model)). A device that stores nothing and
+  signs nothing is a smaller target — but only because it does less.
+- The ESP32-S3 has WiFi and Bluetooth radios physically present on the
+  board. This firmware never initializes either one, and the repo contains
+  no radio code at all — but "no radio in the firmware" is not the same as
+  "no radio on the board." Someone who needs the latter guarantee wants a
+  different device.
+
+If that trade is acceptable — you want to supply and verify your own
+entropy by hand, on a cheap device, and move the result into real
+custody — that's exactly the job this does.
+
 ## Why dice instead of the chip's own RNG?
 
 Because then nothing has to be trusted except a defined, checkable
@@ -235,8 +266,8 @@ screen** (see [Using it](#using-it), step 4):
 ## Roadmap
 
 Planned hardening and UX work — runtime build-mode toggle, reproducible
-builds with published binary hashes, signed releases, and a consolidated
-threat-model section — is tracked in [`ROADMAP.md`](ROADMAP.md).
+builds with published binary hashes, and signed releases — is tracked in
+[`ROADMAP.md`](ROADMAP.md).
 
 ## License
 
