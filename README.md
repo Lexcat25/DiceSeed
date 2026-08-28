@@ -101,9 +101,9 @@ Confirmed working on real hardware as of v1.2.0 (display renders correctly),
 v2.0.1 (compat build's entropy matched both SeedSigner and iancoleman.io on
 the same rolls; the two-button wipe hold works correctly — a v2.0.0
 regression in that gesture was found and fixed in v2.0.1, see the version
-history in `DiceSeed.ino`), and v2.1.0 (the backup-verification quiz). Also
-confirmed working unmodified on the touch-screen variant of the board (touch
-input itself isn't used yet).
+history in `DiceSeed.ino`), v2.1.0 (the backup-verification quiz), and
+v2.2.0 (tap-to-enter rolls on a Touch board, and the same binary falling
+back to buttons on a non-touch board — both confirmed on real hardware).
 
 **Getting the code onto disk, if you're not using `git clone`:** GitHub's
 "Download ZIP" (from the repo page or a Release) extracts to a folder named
@@ -111,10 +111,10 @@ input itself isn't used yet).
 sketch's `.ino` to sit in a folder with the *exact same name* — if that
 doesn't match, opening `DiceSeed.ino` makes the IDE "helpfully" create a
 correctly-named `DiceSeed` subfolder and move **only the `.ino`** into it,
-stranding `build_mode.h`, `diceseed_core.h`, `bip39_wordlist.h`, and
-`tft_setup.h` one level up, outside the folder the compiler actually looks
-in — a `fatal error: build_mode.h: No such file or directory` that has
-nothing to do with your setup. **Rename the extracted folder to exactly
+stranding `build_mode.h`, `diceseed_core.h`, `bip39_wordlist.h`,
+`tft_setup.h`, and `touch.h` one level up, outside the folder the compiler
+actually looks in — a `fatal error: build_mode.h: No such file or directory`
+that has nothing to do with your setup. **Rename the extracted folder to exactly
 `DiceSeed` before opening anything in the IDE**, and this never happens.
 `git clone https://github.com/Lexcat25/DiceSeed.git` sidesteps it
 entirely, since the cloned folder is already named `DiceSeed`.
@@ -132,7 +132,32 @@ entirely, since the cloned folder is already named `DiceSeed`.
    Boards Manager), which also gets the flash size (16MB) and partition table right. The
    generic "ESP32S3 Dev Module" entry also compiles this sketch, but under different
    flash/partition defaults that don't match what's actually on the board.
-5. Open `DiceSeed.ino` and compile/upload.
+5. Open `DiceSeed.ino` and compile/upload. No other Tools-menu settings need
+   changing — the sketch opens no serial port, so the USB CDC options don't
+   matter either way.
+
+The same thing with `arduino-cli`, run from inside the sketch folder:
+
+```sh
+# one-time setup
+arduino-cli config add board_manager.additional_urls \
+  https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+arduino-cli core update-index
+arduino-cli core install esp32:esp32
+arduino-cli lib install TFT_eSPI
+
+# build (compat is the default; add the --build-property line for classic)
+arduino-cli compile --fqbn esp32:esp32:lilygo_t_display_s3 .
+arduino-cli compile --fqbn esp32:esp32:lilygo_t_display_s3 \
+  --build-property "build.extra_flags=-DDICESEED_COMPAT_BUILD=0" .
+
+# flash -- find your port first
+arduino-cli board list
+arduino-cli upload -p /dev/ttyACM0 --fqbn esp32:esp32:lilygo_t_display_s3 .
+```
+
+On Linux your user needs to be in the `dialout` group to open the serial port
+(`sudo usermod -aG dialout $USER`, then log out and back in).
 
 You do **not** need to hand-edit TFT_eSPI's own `User_Setup_Select.h`. This
 repo ships `tft_setup.h` in the sketch folder, which TFT_eSPI auto-detects
