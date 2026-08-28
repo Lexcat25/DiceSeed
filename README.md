@@ -50,9 +50,14 @@ other — see [Build variants](#build-variants).
 
 ## Hardware
 
-- LilyGO T-Display S3 — plain/non-touch version. Uses the board's ST7789
-  display (170×320, 8-bit parallel bus) and its two built-in buttons
-  (GPIO0, GPIO14).
+- LilyGO T-Display S3 — **either the plain or the Touch version**. Uses the
+  board's ST7789 display (170×320, 8-bit parallel bus) and its two built-in
+  buttons (GPIO0, GPIO14).
+- **One firmware serves both boards.** On boot it probes for a capacitive
+  touch controller; if one answers, the roll-entry screen adds a tap grid. If
+  not, everything behaves exactly as it always has. The buttons work on every
+  board either way — touch is additive, never required. See "Touch input"
+  below.
 - USB-C cable for flashing. **Not required afterward** — see the security
   note about running on battery power for actual use.
 
@@ -145,7 +150,8 @@ though nothing about it is visible from a successful build log.
    button 1, confirm with button 2.
 2. For each roll: cycle the shown face 1–6 with button 1 to match your
    physical die, confirm with button 2. Long-press button 2 to go back a
-   roll if you mis-entered one.
+   roll if you mis-entered one. **On a Touch board** you can instead tap the
+   face directly — see "Touch input" below.
 3. After the last roll, the mnemonic is shown, four words per screen
    (button 2: next page). A red warning appears if every single roll came
    back identical — a sanity check, not a hard stop.
@@ -174,6 +180,49 @@ though nothing about it is visible from a successful build log.
 6. **Hold both buttons for 2 seconds** to wipe RAM and reset back to the
    menu. This is the only way to leave the result screen; there's no
    "start a new one without wiping" shortcut, deliberately.
+
+## Touch input
+
+On a **T-Display S3 Touch** board the roll-entry screen shows the six faces as
+a tap grid. Nothing else in the app uses touch, and nothing requires it.
+
+- **First tap selects** a face and turns its cell green. **A second tap on that
+  same cell commits** the roll. It is deliberately not commit-on-first-tap: a
+  mis-tap would otherwise write a wrong roll with no warning, and on this
+  device a wrong roll is a wrong seed.
+- Until you choose, every cell is plain white. The green cell always means
+  "another tap here commits this." After a commit the grid returns to all
+  white rather than pre-selecting a value you did not pick.
+- **The buttons still work**, and work identically, including on a Touch
+  board — cycling with button 1 lights the matching cell. Mix the two freely.
+- Taps landing in the gaps between cells are ignored rather than snapped to the
+  nearest one.
+- **The two-button wipe hold stays button-only.** It is meant to be hard to
+  trigger by accident, which a touch gesture would undermine.
+
+### Hardware notes
+
+Everything here was verified on both board variants before it was written, and
+is documented at length in `touch.h`:
+
+- The controller is a **CST816-family part at I2C address 0x15**. LilyGO also
+  ships boards with a **CST328 at 0x1A**, which this does *not* drive — such a
+  board reports "no touch" and falls back to the buttons. That is the correct
+  degradation, not a failure. LilyGO's own example cannot tell the two apart
+  either; it asks you to try one and switch if touch misbehaves.
+- Presence **must** be probed with a bare address ACK. The chip sits in standby
+  until a touch event and will not answer a register read before then, so
+  reading its ID register at boot reports "absent" on a perfectly good panel.
+- The chip **auto-sleeps after 2 seconds** of no touch (register 0xF9, factory
+  default) and stops answering while asleep. Register 0xFE disables that; the
+  write is retried on the first read the chip does answer, since at boot it may
+  already be asleep and reject the write itself.
+- Coordinates arrive in the panel's native 170×320 portrait frame, so they need
+  rotating for the landscape UI: `display_x = native_y`,
+  `display_y = 169 - native_x`.
+- The driver is hand-rolled rather than pulling in TouchLib. Once the probe is
+  an address ACK and a read is 7 bytes from register 0x00, a large dependency
+  buys nothing and widens what an auditor has to read.
 
 ## Security model
 

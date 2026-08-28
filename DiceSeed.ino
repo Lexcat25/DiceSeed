@@ -154,12 +154,13 @@
 //                         in-progress verify pass); the wipe-hold gesture
 //                         is unaffected and works from any sub-view.
 
-#define FIRMWARE_VERSION_BASE "2.1.0"
+#define FIRMWARE_VERSION_BASE "2.2.0"
 
 #include "build_mode.h"
 #include "tft_setup.h" // must precede <TFT_eSPI.h> -- see that file for why
 #include <TFT_eSPI.h>
 #include "diceseed_core.h"
+#include "touch.h"
 
 #if DICESEED_COMPAT_BUILD
   #define FIRMWARE_VERSION FIRMWARE_VERSION_BASE "-compat"
@@ -262,6 +263,17 @@ int verifyChoiceIdx = 0;        // which of the 3 is currently displayed
 int verifyCorrectSlot = 0;      // which slot (0-2) holds the real word
 bool verifyAnswered = false;    // false = picking, true = showing right/wrong
 bool verifyWasCorrect = false;  // set once, when the pick is locked in
+bool touchNeedsSelect = true;   // "no face has been explicitly chosen yet this
+                                // roll." Cleared by a tap OR by BTN1, since
+                                // both are deliberate choices; set on entry and
+                                // after every commit. Two jobs: the touch grid
+                                // shows no green cell until a real choice is
+                                // made (the post-commit reset to face 1 must
+                                // not look pre-selected), and a tap can only
+                                // commit a face that was actually chosen --
+                                // otherwise tapping "1" straight after a commit
+                                // would commit in one tap while every other
+                                // face needs two. Unused on a non-touch board.
 
 void drawMenu() {
   tft.fillScreen(TFT_BLACK);
@@ -298,10 +310,80 @@ void startRolling() {
   csBits = (menuChoice == 0) ? 4 : 8;
   currentRollIndex = 0;
   currentFace = 1;
+  touchNeedsSelect = true;
   screen = SCR_ROLLING;
 }
 
+// ---- Touch roll-entry grid -------------------------------------------------
+// Only used when a touch panel is actually present. The button layout is left
+// exactly as it was, so a non-touch board renders and behaves identically to
+// previous firmware.
+static const int GRID_X0 = 8, GRID_Y0 = 32;
+static const int CELL_W = 98, CELL_H = 52;
+static const int CELL_DX = 103, CELL_DY = 56;  // cell pitch, including gaps
+
+static void cellOrigin(int face, int &x, int &y) {
+  int i = face - 1;                 // 1..6 -> 0..5, laid out 3 across, 2 down
+  x = GRID_X0 + (i % 3) * CELL_DX;
+  y = GRID_Y0 + (i / 3) * CELL_DY;
+}
+
+// Returns 1..6, or 0 if the point missed every cell. Taps in the gaps and
+// margins are ignored rather than snapped to the nearest cell -- on a dice
+// entry screen a wrong value is worse than a dropped tap.
+static int faceAtPoint(int x, int y) {
+  for (int face = 1; face <= 6; face++) {
+    int cx, cy;
+    cellOrigin(face, cx, cy);
+    if (x >= cx && x < cx + CELL_W && y >= cy && y < cy + CELL_H) return face;
+  }
+  return 0;
+}
+
+static void drawCell(int face, bool selected) {
+  int x, y;
+  cellOrigin(face, x, y);
+  uint16_t border = selected ? TFT_GREEN : TFT_DARKGREY;
+  uint16_t digit  = selected ? TFT_GREEN : TFT_WHITE;
+
+  tft.fillRoundRect(x, y, CELL_W, CELL_H, 6, TFT_BLACK);
+  // The lit border is the "did my tap land, and on what?" feedback. Touch
+  // gives no tactile confirmation the way the buttons do, so it has to be
+  // visual or it isn't there at all.
+  tft.drawRoundRect(x, y, CELL_W, CELL_H, 6, border);
+  if (selected) tft.drawRoundRect(x + 1, y + 1, CELL_W - 2, CELL_H - 2, 5, border);
+
+  tft.setTextSize(4);                       // 24x32 px glyph
+  tft.setTextColor(digit, TFT_BLACK);
+  tft.setCursor(x + (CELL_W - 24) / 2, y + (CELL_H - 32) / 2);
+  tft.printf("%d", face);
+}
+
+static void drawRollingTouch() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 6);
+  tft.printf("Roll %d / %d", currentRollIndex + 1, rollsNeeded);
+
+  // Nothing is shown as selected until a tap has actually landed: on entry
+  // every cell is plain white, and the green cell means "this is what a second
+  // tap will commit". Showing the post-commit reset value as pre-selected
+  // would be claiming a choice the user has not made yet.
+  for (int face = 1; face <= 6; face++)
+    drawCell(face, !touchNeedsSelect && face == currentFace);
+
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setCursor(10, 146);
+  tft.println("Tap a number, then tap it again to confirm");
+  tft.setCursor(10, 156);
+  tft.println("Buttons still work.  BTN2 hold: previous roll");
+}
+
 void drawRolling() {
+  if (dstouch::detected()) { drawRollingTouch(); return; }
+
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
@@ -537,6 +619,46 @@ void drawWipeConfirm() {
   tft.println("and resetting...");
 }
 
+// Commits the currently shown face as the next roll. Extracted verbatim from
+// the BTN2 handler so the touch path commits through exactly the same code --
+// duplicating the entropy-derivation block for a second caller would be the
+// real risk here.
+void confirmCurrentRoll() {
+  touchNeedsSelect = true;  // the only line added to the extracted body
+  rolls[currentRollIndex] = currentFace;
+  currentRollIndex++;
+  currentFace = 1;
+  if (currentRollIndex >= rollsNeeded) {
+    allRollsIdentical = true;
+    for (int i = 1; i < rollsNeeded; i++) {
+      if (rolls[i] != rolls[0]) { allRollsIdentical = false; break; }
+    }
+    // Two steps, not the computeMnemonic() convenience wrapper: this
+    // build needs entropyBytes to survive afterward for the raw-
+    // entropy display, so it can't use the wrapper (which scrubs its
+    // internal entropy copy before returning).
+#if DICESEED_COMPAT_BUILD
+    diceseed::diceToEntropySeedSignerCompat(rolls, rollsNeeded, entBytes, entropyBytes);
+#else
+    diceseed::diceToEntropy(rolls, rollsNeeded, entBytes, entropyBytes);
+#endif
+    diceseed::entropyToMnemonic(entropyBytes, entBytes, wordCount, csBits, mnemonicWords);
+    // Rolls are no longer needed once the mnemonic is derived.
+    mbedtls_platform_zeroize(rolls, sizeof(rolls));
+    resultPage = 0;
+    showingEntropy = false;
+    btn1WasDown = false;
+    btn1PureTap = false;
+    verifying = false;
+    verifyStep = 0;
+    pickVerifyWords();
+    screen = SCR_RESULT;
+    drawResult();
+  } else {
+    drawRolling();
+  }
+}
+
 void setup() {
   // No Serial.begin() on purpose: never let the mnemonic risk leaking to USB.
   pinMode(PIN_POWER_ON, OUTPUT);
@@ -557,6 +679,11 @@ void setup() {
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
 
+  // Probe for a touch panel. A non-touch board simply does not answer, and
+  // everything falls back to the buttons -- which are the floor on every
+  // board, touch or not.
+  dstouch::begin();
+
   drawMenu();
 }
 
@@ -576,48 +703,35 @@ void loop() {
     }
 
     case SCR_ROLLING: {
+      if (dstouch::detected()) {
+        int tx, ty;
+        if (dstouch::tapped(tx, ty)) {
+          int f = faceAtPoint(tx, ty);
+          // First tap selects (and lights that cell's border); a second tap on
+          // the SAME cell commits. Deliberately not commit-on-first-tap: a
+          // mis-tap would otherwise write a wrong roll with no warning.
+          if (f != 0 && (touchNeedsSelect || f != currentFace)) {
+            currentFace = f;
+            touchNeedsSelect = false;
+            drawRolling();
+          } else if (f != 0) {
+            confirmCurrentRoll();
+          }
+        }
+      }
       if (button1Pressed()) {
         currentFace = (currentFace % 6) + 1;
+        touchNeedsSelect = false;  // BTN1 is a choice; show it on the grid
         drawRolling();
       }
       int ev = button2Event();
       if (ev == 1) {
-        rolls[currentRollIndex] = currentFace;
-        currentRollIndex++;
-        currentFace = 1;
-        if (currentRollIndex >= rollsNeeded) {
-          allRollsIdentical = true;
-          for (int i = 1; i < rollsNeeded; i++) {
-            if (rolls[i] != rolls[0]) { allRollsIdentical = false; break; }
-          }
-          // Two steps, not the computeMnemonic() convenience wrapper: this
-          // build needs entropyBytes to survive afterward for the raw-
-          // entropy display, so it can't use the wrapper (which scrubs its
-          // internal entropy copy before returning).
-#if DICESEED_COMPAT_BUILD
-          diceseed::diceToEntropySeedSignerCompat(rolls, rollsNeeded, entBytes, entropyBytes);
-#else
-          diceseed::diceToEntropy(rolls, rollsNeeded, entBytes, entropyBytes);
-#endif
-          diceseed::entropyToMnemonic(entropyBytes, entBytes, wordCount, csBits, mnemonicWords);
-          // Rolls are no longer needed once the mnemonic is derived.
-          mbedtls_platform_zeroize(rolls, sizeof(rolls));
-          resultPage = 0;
-          showingEntropy = false;
-          btn1WasDown = false;
-          btn1PureTap = false;
-          verifying = false;
-          verifyStep = 0;
-          pickVerifyWords();
-          screen = SCR_RESULT;
-          drawResult();
-        } else {
-          drawRolling();
-        }
+        confirmCurrentRoll();
       } else if (ev == 2 && currentRollIndex > 0) {
         currentRollIndex--;
         currentFace = rolls[currentRollIndex];
         rolls[currentRollIndex] = 0;
+        touchNeedsSelect = false;  // the restored value is a real choice
         drawRolling();
       }
       break;
