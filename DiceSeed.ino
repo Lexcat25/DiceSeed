@@ -168,8 +168,42 @@
 //                         open (the one issue #2 recommends everywhere).
 //                         Non-touch boards render and behave exactly as
 //                         before. Implements issue #1.
+//   2.3.1 (2026-08-29) - BTN2 can no longer commit a roll nobody chose.
+//                         After startRolling() and after every commit,
+//                         currentFace resets to 1, so a BTN2 press with
+//                         no selection made silently recorded that
+//                         invisible default and advanced -- a value the
+//                         user never chose entering the entropy path,
+//                         undetectable downstream (the result is still
+//                         valid BIP39, and the all-same warning only
+//                         fires if EVERY roll is identical). The touch
+//                         path already had the right rule (a first tap
+//                         can only select); now BTN2 obeys it too, on
+//                         every board: refused presses flash a red hint
+//                         and do not advance. The non-touch screen also
+//                         draws the big face white until chosen (green
+//                         once chosen), so the displayed default no
+//                         longer looks confirmed -- the touch grid's
+//                         white->green language, one screen over.
+//                         Accepted scope (issue #2, all boards by
+//                         request). BTN1's first press likewise now
+//                         REVEALS the current face (lighting it where
+//                         it stands) instead of stepping past it --
+//                         stepping 1->2 with nothing lit would have
+//                         made a rolled 1 cost six wrapping presses.
+//                         Reveal-then-advance means a roll of N costs
+//                         exactly N presses: one more than the old
+//                         pre-lit-default UI, for any N, and a rolled 1
+//                         is a single press (issue #2's feared tradeoff,
+//                         designed away).
+//                         The gate is touchNeedsSelect, previously
+//                         documented as "unused on a non-touch board."
+//                         Hardware-verified on the Touch board; the
+//                         non-touch digit rendering is compile-verified
+//                         only (no non-touch board on hand). Implements
+//                         issue #2.
 
-#define FIRMWARE_VERSION_BASE "2.3.0"
+#define FIRMWARE_VERSION_BASE "2.3.1"
 
 #include "build_mode.h"
 #include "tft_setup.h" // must precede <TFT_eSPI.h> -- see that file for why
@@ -288,7 +322,13 @@ bool touchNeedsSelect = true;   // "no face has been explicitly chosen yet this
                                 // commit a face that was actually chosen --
                                 // otherwise tapping "1" straight after a commit
                                 // would commit in one tap while every other
-                                // face needs two. Unused on a non-touch board.
+                                // face needs two. Since v2.3.1 it is
+                                // consulted on every board, not just
+                                // touch ones: BTN2 cannot commit a roll
+                                // while it is set (the issue #2 gate),
+                                // and on the non-touch screen it is
+                                // what draws the big face white (no
+                                // choice yet) instead of green.
 bool menuNeedsSelect = true;    // the menu's analog of touchNeedsSelect:
                                 // "no word count has been explicitly chosen
                                 // yet." Cleared by a tap on a menu cell or
@@ -519,7 +559,10 @@ void drawRolling() {
   tft.printf("Roll %d / %d\n", currentRollIndex + 1, rollsNeeded);
 
   tft.setTextSize(6);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  // White until a face has actually been chosen, green once chosen -- the
+  // same white->green language as the touch grid's cells. Always-green is
+  // what made the unselected default look confirmed (changed in v2.3.1).
+  tft.setTextColor(touchNeedsSelect ? TFT_WHITE : TFT_GREEN, TFT_BLACK);
   tft.setCursor(130, 60);
   tft.printf("%d", currentFace);
 
@@ -747,6 +790,22 @@ void drawWipeConfirm() {
   tft.println("and resetting...");
 }
 
+// A BTN2 short press with no face chosen must not commit: after
+// startRolling() and after every commit, currentFace resets to 1, so
+// committing the unshown default would silently record a roll the user
+// never made -- the "entropy only from rolls you enter" violation issue
+// #2 tracks. Flash the reason in red instead of silently ignoring the
+// press; a plain no-op would read as a dead button. Works for both
+// layouts -- drawRolling() re-dispatches to whichever one is active.
+static void rollRefuseCommit() {
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_RED, TFT_BLACK);
+  tft.setCursor(10, dstouch::detected() ? 146 : 145);
+  tft.print("Select a face first (BTN1 or tap), then confirm  ");
+  delay(800);
+  drawRolling();
+}
+
 // Commits the currently shown face as the next roll. Extracted verbatim from
 // the BTN2 handler so the touch path commits through exactly the same code --
 // duplicating the entropy-derivation block for a second caller would be the
@@ -878,13 +937,31 @@ void loop() {
         }
       }
       if (button1Pressed()) {
-        currentFace = (currentFace % 6) + 1;
-        touchNeedsSelect = false;  // BTN1 is a choice; show it on the grid
+        // First press REVEALS the current face (1 after start/commit)
+        // rather than advancing past it: nothing is lit, so stepping to
+        // 2 on the first press would make face 1 reachable only by
+        // wrapping all the way around -- six presses for a rolled 1.
+        // Reveal-then-advance means a roll of N costs exactly N presses.
+        if (touchNeedsSelect) {
+          touchNeedsSelect = false;  // light what's there; don't advance
+        } else {
+          currentFace = (currentFace % 6) + 1;
+        }
         drawRolling();
       }
       int ev = button2Event();
       if (ev == 1) {
-        confirmCurrentRoll();
+        // v2.3.1: BTN2 cannot commit a roll nobody chose. With no
+        // selection the internal currentFace is the post-commit reset
+        // value (1) -- committing it would record a value the user never
+        // entered, silently. The touch path already enforced this (a
+        // first tap can only select); this extends the same rule to
+        // BTN2, on every board. Refused with feedback, never a no-op.
+        if (touchNeedsSelect) {
+          rollRefuseCommit();
+        } else {
+          confirmCurrentRoll();
+        }
       } else if (ev == 2 && currentRollIndex > 0) {
         currentRollIndex--;
         currentFace = rolls[currentRollIndex];

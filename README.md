@@ -105,7 +105,10 @@ history in `DiceSeed.ino`), v2.1.0 (the backup-verification quiz), v2.2.0
 (tap-to-enter rolls on a Touch board, and the same binary falling back to
 buttons on a non-touch board — both confirmed on real hardware), and v2.3.0
 (the word-count menu as tap cells on a Touch board, including BTN2's
-refusal to start an unchosen session).
+refusal to start an unchosen session), and v2.3.1 (BTN2's refusal to
+commit an unselected roll — confirmed on the Touch board; the non-touch
+white-until-chosen face rendering from the same change is compile-verified
+only, no non-touch board was on hand).
 
 **Getting the code onto disk, if you're not using `git clone`:** GitHub's
 "Download ZIP" (from the repo page or a Release) extracts to a folder named
@@ -177,10 +180,14 @@ though nothing about it is visible from a successful build log.
    button 1, confirm with button 2. **On a Touch board** the two counts are
    tap cells — tap one to light it, tap the same one again to start (see
    "Touch input" below).
-2. For each roll: cycle the shown face 1–6 with button 1 to match your
-   physical die, confirm with button 2. Long-press button 2 to go back a
-   roll if you mis-entered one. **On a Touch board** you can instead tap the
-   face directly — see "Touch input" below.
+2. For each roll: cycle the face 1–6 with button 1 to match your physical
+   die, confirm with button 2. The first button-1 press lights the current
+   face (1 after each commit); each further press advances it — so a roll
+   of N takes N presses. An unselected press of button 2 is refused with a
+   red hint rather than silently recording the default. The face shows
+   white until selected, green once chosen. Long-press button 2 to go back
+   a roll if you mis-entered one. **On a Touch board** you can instead tap
+   the face directly — see "Touch input" below.
 3. After the last roll, the mnemonic is shown, four words per screen
    (button 2: next page). A red warning appears if every single roll came
    back identical — a sanity check, not a hard stop.
@@ -269,7 +276,10 @@ is documented at length in `touch.h`:
   `memset`, which a compiler can optimize away as a dead store) at boot and
   before the wipe-triggered reset. This now includes the raw entropy buffer
   (kept in RAM for the hex display above), not just the rolls and mnemonic.
-- Entropy comes **only** from the dice rolls you enter. The one place this
+- Entropy comes **only** from the dice rolls you enter — enforced since
+  v2.3.1, not just stated: an unselected roll cannot be committed (BTN2
+  is refused until a face was deliberately chosen), so a default value
+  the user never picked cannot enter the rolls. The one place this
   device's hardware RNG (`esp_random()`) is used at all is picking which
   *wrong* words to show as decoys in the backup-verification quiz below —
   that has no bearing on the mnemonic itself and isn't part of the entropy
