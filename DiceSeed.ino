@@ -231,8 +231,36 @@
 //                         pre-highlighted per the displayed-value
 //                         contract. No idle auto-cancel: the screen
 //                         waits for a decision. Implements issue #3.
+//   2.3.3 (2026-08-29) - Touch for the result screen (issue #4 plus a
+//                         paging addition): the backup quiz now draws
+//                         all three candidates at once as full-width
+//                         stacked cells (whole word, size 3 -- max 8
+//                         chars = 144px in a 304px cell), using the
+//                         established two-tap select-then-commit rule;
+//                         nothing pre-lit; BTN2 refuses unselected (red
+//                         flash) on touch; BTN1 is reveal-then-advance
+//                         over the cells. The non-touch quiz is
+//                         unchanged (single word, BTN1 cycles, BTN2
+//                         commits the displayed word), and the lock-in
+//                         logic is one shared lockInVerifyChoice()
+//                         extracted from the BTN2 handler so both input
+//                         paths commit through identical code, and the
+//                         right/wrong screen advances on any tap (its
+//                         only action), matching BTN2.
+//                         Additionally (beyond the filed issue): the
+//                         word pages gain < > page-nav cells stacked at
+//                         the far right edge on touch boards -- word
+//                         lines never pass x~154, leaving ~110px clear. Page
+//                         nav is deliberately SINGLE-tap: page flips
+//                         are instantly reversible and the redraw is
+//                         the feedback, so the two-tap rule stays
+//                         reserved for consequential commits; > on the
+//                         last page does exactly what BTN2 does there
+//                         (enters the quiz), and < gives touch a
+//                         back-a-page the buttons never had. Implements
+//                         issue #4.
 
-#define FIRMWARE_VERSION_BASE "2.3.2"
+#define FIRMWARE_VERSION_BASE "2.3.3"
 
 #include "build_mode.h"
 #include "tft_setup.h" // must precede <TFT_eSPI.h> -- see that file for why
@@ -341,6 +369,14 @@ int verifyChoiceIdx = 0;        // which of the 3 is currently displayed
 int verifyCorrectSlot = 0;      // which slot (0-2) holds the real word
 bool verifyAnswered = false;    // false = picking, true = showing right/wrong
 bool verifyWasCorrect = false;  // set once, when the pick is locked in
+bool verifyNeedsSelect = true;  // the quiz's analog of the other
+                                // *NeedsSelect flags (v2.3.3): no
+                                // candidate chosen yet on the touch
+                                // grid. Set on every startVerifyStep();
+                                // cleared by a tap or BTN1. Consulted on
+                                // touch boards only -- the non-touch UI
+                                // always displays exactly one candidate,
+                                // so there is no invisible default there.
 bool touchNeedsSelect = true;   // "no face has been explicitly chosen yet this
                                 // roll." Cleared by a tap OR by BTN1, since
                                 // both are deliberate choices; set on entry and
@@ -675,6 +711,39 @@ void drawRolling() {
   tft.println("BTN2 hold: back to previous roll");
 }
 
+// ---- Result-screen page navigation (touch only, v2.3.3) ---------------
+// Stacked vertically at the far right edge of the word pages: < (back)
+// above > (forward), x=264..312. Word lines ("12. scissors") never pass
+// x~154 at size 2, so this keeps ~110px clear of the words, and the
+// cells also clear the title line above and the bottom hints (whose text
+// ends by x~208).
+static const int NAVCELL_W = 48, NAVCELL_H = 48;
+static const int NAVCELL_X = 264;
+static const int NAVCELL_PREV_Y = 38, NAVCELL_NEXT_Y = 94;
+
+// Returns -1 on miss, 0 = previous page, 1 = next page. Misses are
+// ignored, never snapped -- same rule as every other hit test.
+static int pageNavAtPoint(int x, int y) {
+  if (x >= NAVCELL_X && x < NAVCELL_X + NAVCELL_W) {
+    if (y >= NAVCELL_PREV_Y && y < NAVCELL_PREV_Y + NAVCELL_H) return 0;
+    if (y >= NAVCELL_NEXT_Y && y < NAVCELL_NEXT_Y + NAVCELL_H) return 1;
+  }
+  return -1;
+}
+
+static void drawPageNavCells() {
+  const int ys[2] = { NAVCELL_PREV_Y, NAVCELL_NEXT_Y };
+  const char* glyphs[2] = { "<", ">" };
+  for (int i = 0; i < 2; i++) {
+    tft.fillRoundRect(NAVCELL_X, ys[i], NAVCELL_W, NAVCELL_H, 6, TFT_BLACK);
+    tft.drawRoundRect(NAVCELL_X, ys[i], NAVCELL_W, NAVCELL_H, 6, TFT_DARKGREY);
+    tft.setTextSize(4);  // 24x32 px glyph
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(NAVCELL_X + (NAVCELL_W - 24) / 2, ys[i] + (NAVCELL_H - 32) / 2);
+    tft.print(glyphs[i]);
+  }
+}
+
 void drawResult() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -705,6 +774,9 @@ void drawResult() {
     tft.print("\n");
     y += 25;
   }
+  // Page-nav chevrons for touch boards; single-tap by design (see the
+  // SCR_RESULT tap handler for the rationale).
+  if (dstouch::detected()) drawPageNavCells();
   tft.setTextSize(1);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.setCursor(10, 130);
@@ -781,7 +853,76 @@ void startVerifyStep() {
   }
   verifyChoiceIdx = esp_random() % 3;
   verifyAnswered = false;
+  // Touch grid starts with nothing lit (verifyNeedsSelect); the random
+  // start slot above still seeds the non-touch cycle and the touch
+  // "reveal" cell, where its anti-pattern rationale is moot but harmless.
+  verifyNeedsSelect = true;
   drawVerifyPicking();
+}
+
+// ---- Verify-quiz word cells (touch only, v2.3.3) -----------------------
+// Three full-width stacked cells showing the WHOLE word (issue #4's
+// "stacked rows, full words" option): max 8 chars at size 3 = 144px in a
+// 304px cell, so no truncation and no reliance on the 4-char-prefix
+// convention.
+static const int VCELL_X0 = 8, VCELL_W = 304, VCELL_H = 30, VCELL_DY = 32;
+static const int VCELL_Y0 = 46;
+
+static void verifyCellOrigin(int slot, int &x, int &y) {
+  x = VCELL_X0;
+  y = VCELL_Y0 + slot * VCELL_DY;
+}
+
+// Returns slot 0-2, or -1 on a miss. Misses are ignored, never snapped.
+static int verifyCellAtPoint(int x, int y) {
+  for (int s = 0; s < 3; s++) {
+    int cx, cy;
+    verifyCellOrigin(s, cx, cy);
+    if (x >= cx && x < cx + VCELL_W && y >= cy && y < cy + VCELL_H) return s;
+  }
+  return -1;
+}
+
+static void drawVerifyCell(int slot, bool selected) {
+  int x, y;
+  verifyCellOrigin(slot, x, y);
+  uint16_t border = selected ? TFT_GREEN : TFT_DARKGREY;
+
+  tft.fillRoundRect(x, y, VCELL_W, VCELL_H, 6, TFT_BLACK);
+  tft.drawRoundRect(x, y, VCELL_W, VCELL_H, 6, border);
+  if (selected) tft.drawRoundRect(x + 1, y + 1, VCELL_W - 2, VCELL_H - 2, 5, border);
+  // print() streams the sensitive word straight out -- no formatted copy,
+  // same discipline as the word list in drawResult().
+  tft.setTextSize(3);  // 18x24 px glyph
+  tft.setTextColor(selected ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
+  tft.setCursor(x + (VCELL_W - 18 * (int)strlen(verifyChoices[slot])) / 2, y + 3);
+  tft.print(verifyChoices[slot]);
+}
+
+// All three candidates visible at once as cells -- the same visual
+// language as every other touch surface. Nothing pre-highlighted: no
+// cell claims a choice the user has not made.
+static void drawVerifyPickingTouch() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 5);
+  tft.print("Verify backup (");
+  tft.print(verifyStep + 1);
+  tft.print("/3)");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 26);
+  tft.print("Word #");
+  tft.print(verifyWordNums[verifyStep]);
+  tft.println(" was:");
+  for (int s = 0; s < 3; s++)
+    drawVerifyCell(s, !verifyNeedsSelect && s == verifyChoiceIdx);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setCursor(10, 148);
+  tft.println("Tap a word, tap it again to confirm");
+  tft.setCursor(10, 158);
+  tft.println("Buttons still work. Hold BOTH 2s: WIPE");
 }
 
 // A blind multiple-choice pick, not a "here's the answer, compare it
@@ -793,6 +934,8 @@ void startVerifyStep() {
 // weaker guarantee (this is the exact tradeoff Justin's BTC group flagged
 // after testing v2.1.0's original re-display version on real hardware).
 void drawVerifyPicking() {
+  if (dstouch::detected()) { drawVerifyPickingTouch(); return; }
+
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.setTextSize(2);
@@ -839,9 +982,20 @@ void drawVerifyResult() {
   tft.setTextSize(1);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.setCursor(10, 142);
-  tft.println(verifyStep + 1 < 3 ? "BTN2 tap: next check" : "BTN2 tap: back to word list");
+  tft.println(verifyStep + 1 < 3
+                  ? (dstouch::detected() ? "Tap or BTN2: next check" : "BTN2 tap: next check")
+                  : (dstouch::detected() ? "Tap or BTN2: back to word list" : "BTN2 tap: back to word list"));
   tft.setCursor(10, 155);
   tft.println("Hold BOTH buttons 2s: WIPE + reset");
+}
+
+// Locks in the currently-displayed/chosen candidate. Extracted (v2.3.3)
+// from the BTN2 handler so the touch path commits through exactly the
+// same code -- same single-source reasoning as confirmCurrentRoll (v2.2.0).
+void lockInVerifyChoice() {
+  verifyAnswered = true;
+  verifyWasCorrect = (verifyChoiceIdx == verifyCorrectSlot);
+  drawVerifyResult();
 }
 
 // One nibble at a time via a constant lookup table, never a formatted
@@ -1181,7 +1335,19 @@ void loop() {
       if (b1 && b2) btn1PureTap = false;            // BTN2 joined -> not a tap
       if (!b1 && btn1WasDown && btn1PureTap) {      // BTN1 just released, clean
         if (picking) {
-          verifyChoiceIdx = (verifyChoiceIdx + 1) % 3;
+          // Touch boards: reveal-then-advance over the cells (v2.3.3, the
+          // same BTN1 rule as the roll grid) -- first press lights the
+          // cell where it stands, further presses advance. Non-touch keeps
+          // the original single-word cycle.
+          if (dstouch::detected()) {
+            if (verifyNeedsSelect) {
+              verifyNeedsSelect = false;  // light what's there
+            } else {
+              verifyChoiceIdx = (verifyChoiceIdx + 1) % 3;
+            }
+          } else {
+            verifyChoiceIdx = (verifyChoiceIdx + 1) % 3;
+          }
           drawVerifyPicking();
         } else {
           verifying = false; // leaving the verify quiz if we were mid-pass
@@ -1191,13 +1357,79 @@ void loop() {
       }
       btn1WasDown = b1;
 
+      // Touch input on this screen (v2.3.3): quiz cells while picking,
+      // < > page-nav cells on the word pages, and any tap advances the
+      // right/wrong screen (advancing is its only action); the entropy
+      // view takes no taps. Quiz cells use the two-tap rule (a wrong
+      // pick is a wrong verification); page nav is single-tap --
+      // instantly reversible, and the page redraw is its own feedback,
+      // so the two-tap rule stays reserved for consequential commits.
+      if (dstouch::detected() && !showingEntropy) {
+        int tx, ty;
+        if (dstouch::tapped(tx, ty)) {
+          if (picking) {
+            int s = verifyCellAtPoint(tx, ty);
+            if (s >= 0) {
+              if (verifyNeedsSelect || s != verifyChoiceIdx) {
+                verifyChoiceIdx = s;
+                verifyNeedsSelect = false;
+                drawVerifyPicking();
+              } else {
+                lockInVerifyChoice();
+              }
+            }
+          } else if (!verifying) {
+            int nav = pageNavAtPoint(tx, ty);
+            if (nav == 0) {
+              if (resultPage > 0) {  // no page before page 1; miss otherwise
+                resultPage--;
+                drawResult();
+              }
+            } else if (nav == 1) {
+              int perPage = 4;
+              int totalPages = (wordCount + perPage - 1) / perPage;
+              if (resultPage + 1 < totalPages) {
+                resultPage++;
+                drawResult();
+              } else {
+                // Same as BTN2 on the last page: enter the quiz.
+                verifying = true;
+                verifyStep = 0;
+                startVerifyStep();
+              }
+            }
+          } else {
+            // Right/wrong screen (verifying && verifyAnswered): the whole
+            // screen is the tap target -- same advance BTN2 performs.
+            verifyStep++;
+            if (verifyStep >= 3) {
+              verifying = false;
+              resultPage = 0;
+              drawResult();
+            } else {
+              startVerifyStep();
+            }
+          }
+        }
+      }
+
       int ev = button2Event();
       if (ev == 1 && !showingEntropy) {
         if (verifying && !verifyAnswered) {
-          // Lock in the currently-displayed choice.
-          verifyAnswered = true;
-          verifyWasCorrect = (verifyChoiceIdx == verifyCorrectSlot);
-          drawVerifyResult();
+          // Touch boards: nothing is pre-lit, so committing with no
+          // selection would lock in an invisible default -- the exact
+          // flaw the commit gates remove everywhere else. Refuse with
+          // feedback. Non-touch commits the displayed word, as always.
+          if (dstouch::detected() && verifyNeedsSelect) {
+            tft.setTextSize(1);
+            tft.setTextColor(TFT_RED, TFT_BLACK);
+            tft.setCursor(10, 148);
+            tft.print("Select a word first (tap or BTN1)   ");
+            delay(800);
+            drawVerifyPicking();
+          } else {
+            lockInVerifyChoice();
+          }
         } else if (verifying) {
           // Already showed right/wrong -- move to the next checkpoint,
           // or finish the quiz and return to the word list.

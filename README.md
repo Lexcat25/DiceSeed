@@ -110,7 +110,8 @@ commit an unselected roll — confirmed on the Touch board; the non-touch
 white-until-chosen face rendering from the same change is compile-verified
 only, no non-touch board was on hand), and v2.3.2 (the both-button
 leave-rolling escape hatch and its confirm screen — confirmed on the
-Touch board).
+Touch board), and v2.3.3 (quiz candidate cells and word-page paging
+cells — confirmed on the Touch board via a full 50-roll session).
 
 **Getting the code onto disk, if you're not using `git clone`:** GitHub's
 "Download ZIP" (from the repo page or a Release) extracts to a folder named
@@ -194,15 +195,20 @@ though nothing about it is visible from a successful build log.
    offers Cancel (every entered roll kept) or Wipe & return to the menu
    (RAM scrubbed, device reboots).
 3. After the last roll, the mnemonic is shown, four words per screen
-   (button 2: next page). A red warning appears if every single roll came
+   (button 2: next page; **on a Touch board** the `<`/`>` cells at the
+   right edge page back and forward — `<` is ignored on page 1, and `>`
+   on the last page starts the backup check). A red warning appears if
+   every single roll came
    back identical — a sanity check, not a hard stop.
 4. After the last word page, button 2 leads into a **3-step backup quiz**
    instead of wrapping back to page 1, spot-checking word #3, #7, and #11
    (12-word) or #6, #14, and #22 (24-word) — spread roughly
-   beginning/middle/end of the phrase. Each check shows one candidate word
-   at a time out of 3 (the real word plus 2 decoys); cycle through them
-   with button 1, lock in your pick with button 2, and it tells you
-   right/wrong before moving to the next checkpoint. This is a genuine
+   beginning/middle/end of the phrase. Each check presents the 3
+   candidates (the real word plus 2 decoys) — one at a time on button
+   boards, or as three tap cells on a Touch board (tap one to light it,
+   tap it again to lock in); cycle with button 1, lock in your pick with
+   button 2, and it tells you right/wrong; button 2 — or, on a Touch
+   board, any tap — moves to the next checkpoint. This is a genuine
    blind pick, not a "here's the answer, compare it yourself" re-display —
    it's meant to catch "I misread the word and wrote down the wrong one
    confidently," not just "did I copy it correctly," which is the more
@@ -225,8 +231,11 @@ though nothing about it is visible from a successful build log.
 ## Touch input
 
 On a **T-Display S3 Touch** board the word-count menu, the roll-entry
-screen, and the leave-rolling confirm screen are touch-operable: the 12/24
-counts, the six dice faces, and the cancel/wipe cells draw as tap cells.
+screen, the leave-rolling confirm screen, and the result screen are
+touch-operable: the 12/24 counts, the six dice faces, the cancel/wipe
+cells, the word-page `<`/`>` paging cells, and the quiz's candidate words
+draw as tap cells (paging cells are single-tap — page flips are instantly
+reversible; everything that commits a choice keeps the two-tap rule).
 Nothing requires touch, and the buttons work identically on every screen
 either way. Touch is additive, never required.
 
