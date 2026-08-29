@@ -101,9 +101,11 @@ Confirmed working on real hardware as of v1.2.0 (display renders correctly),
 v2.0.1 (compat build's entropy matched both SeedSigner and iancoleman.io on
 the same rolls; the two-button wipe hold works correctly — a v2.0.0
 regression in that gesture was found and fixed in v2.0.1, see the version
-history in `DiceSeed.ino`), v2.1.0 (the backup-verification quiz), and
-v2.2.0 (tap-to-enter rolls on a Touch board, and the same binary falling
-back to buttons on a non-touch board — both confirmed on real hardware).
+history in `DiceSeed.ino`), v2.1.0 (the backup-verification quiz), v2.2.0
+(tap-to-enter rolls on a Touch board, and the same binary falling back to
+buttons on a non-touch board — both confirmed on real hardware), and v2.3.0
+(the word-count menu as tap cells on a Touch board, including BTN2's
+refusal to start an unchosen session).
 
 **Getting the code onto disk, if you're not using `git clone`:** GitHub's
 "Download ZIP" (from the repo page or a Release) extracts to a folder named
@@ -172,7 +174,9 @@ though nothing about it is visible from a successful build log.
 ## Using it
 
 1. Power on → menu: toggle 12-word (50 rolls) / 24-word (99 rolls) with
-   button 1, confirm with button 2.
+   button 1, confirm with button 2. **On a Touch board** the two counts are
+   tap cells — tap one to light it, tap the same one again to start (see
+   "Touch input" below).
 2. For each roll: cycle the shown face 1–6 with button 1 to match your
    physical die, confirm with button 2. Long-press button 2 to go back a
    roll if you mis-entered one. **On a Touch board** you can instead tap the
@@ -208,9 +212,15 @@ though nothing about it is visible from a successful build log.
 
 ## Touch input
 
-On a **T-Display S3 Touch** board the roll-entry screen shows the six faces as
-a tap grid. Nothing else in the app uses touch, and nothing requires it.
+On a **T-Display S3 Touch** board the word-count menu and the roll-entry
+screen are touch-operable: the 12/24 counts and the six dice faces draw as
+tap cells. Nothing requires touch, and the buttons work identically on
+every screen either way. Touch is additive, never required.
 
+- On the menu, the same rule one level up: **tap a word count to light it,
+  tap the same count again to start**. No cell starts pre-lit, and until a
+  count is chosen BTN2 refuses to start (red hint) instead of committing
+  an invisible default.
 - **First tap selects** a face and turns its cell green. **A second tap on that
   same cell commits** the roll. It is deliberately not commit-on-first-tap: a
   mis-tap would otherwise write a wrong roll with no warning, and on this

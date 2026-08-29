@@ -153,8 +153,23 @@
 //                         when not actively picking (and cancels an
 //                         in-progress verify pass); the wipe-hold gesture
 //                         is unaffected and works from any sub-view.
+//   2.3.0 (2026-08-29) - The word-count menu is touch-operable on a Touch
+//                         board: the 12/24 options draw as two rounded-
+//                         rect cells in the same visual language as the
+//                         roll grid, with the same two-tap rule (first
+//                         tap lights a cell, second tap on that cell
+//                         starts). No cell starts pre-lit -- the same
+//                         "don't show a choice the user hasn't made"
+//                         rule as the roll grid, via a menuNeedsSelect
+//                         flag -- and until a count is chosen BTN2
+//                         refuses to start (red hint flash) rather than
+//                         committing an invisible default, adopting the
+//                         stricter of the two behaviors issue #1 left
+//                         open (the one issue #2 recommends everywhere).
+//                         Non-touch boards render and behave exactly as
+//                         before. Implements issue #1.
 
-#define FIRMWARE_VERSION_BASE "2.2.0"
+#define FIRMWARE_VERSION_BASE "2.3.0"
 
 #include "build_mode.h"
 #include "tft_setup.h" // must precede <TFT_eSPI.h> -- see that file for why
@@ -274,8 +289,107 @@ bool touchNeedsSelect = true;   // "no face has been explicitly chosen yet this
                                 // otherwise tapping "1" straight after a commit
                                 // would commit in one tap while every other
                                 // face needs two. Unused on a non-touch board.
+bool menuNeedsSelect = true;    // the menu's analog of touchNeedsSelect:
+                                // "no word count has been explicitly chosen
+                                // yet." Cleared by a tap on a menu cell or
+                                // by BTN1, since both are deliberate
+                                // choices; true at boot (the menu is only
+                                // reached at boot -- leaving it always
+                                // leads to rolls, and the wipe path is a
+                                // reboot). Two jobs, same as the grid flag:
+                                // no cell shows green until a real choice
+                                // is made (the internal menuChoice=0
+                                // default must not look pre-selected), and
+                                // BTN2 on a Touch board refuses to start
+                                // rather than committing a count the user
+                                // never chose. BTN1 clearing it on a
+                                // non-touch board is harmless; it is never
+                                // consulted there (the `>` marker already
+                                // shows what BTN2 will start).
+
+// ---- Touch menu cells ------------------------------------------------------
+// Only used when a touch panel is actually present. The button layout in
+// drawMenu() below is left exactly as it was, so a non-touch board renders
+// and behaves identically to previous firmware. (Same split as
+// drawRolling/drawRollingTouch.)
+static const int MCELL_W = 148, MCELL_H = 64;
+static const int MCELL_X0 = 8, MCELL_X1 = 164, MCELL_Y0 = 56;
+
+static void menuCellOrigin(int choice, int &x, int &y) {
+  x = (choice == 0) ? MCELL_X0 : MCELL_X1;
+  y = MCELL_Y0;
+}
+
+// Returns 0 (12 words), 1 (24 words), or -1 if the point missed both
+// cells. Misses are ignored, never snapped to the nearest cell -- same
+// rule as faceAtPoint: on a seed-entry device a wrong value is worse than
+// a dropped tap.
+static int menuCellAtPoint(int x, int y) {
+  for (int c = 0; c <= 1; c++) {
+    int cx, cy;
+    menuCellOrigin(c, cx, cy);
+    if (x >= cx && x < cx + MCELL_W && y >= cy && y < cy + MCELL_H) return c;
+  }
+  return -1;
+}
+
+// Same visual language as drawCell: darkgrey/white when unchosen, a double
+// green border plus green text once selected -- the lit border is the
+// "did my tap land, and on what?" feedback.
+static void drawMenuCell(int choice, bool selected) {
+  int x, y;
+  menuCellOrigin(choice, x, y);
+  uint16_t border = selected ? TFT_GREEN : TFT_DARKGREY;
+
+  tft.fillRoundRect(x, y, MCELL_W, MCELL_H, 6, TFT_BLACK);
+  tft.drawRoundRect(x, y, MCELL_W, MCELL_H, 6, border);
+  if (selected) tft.drawRoundRect(x + 1, y + 1, MCELL_W - 2, MCELL_H - 2, 5, border);
+
+  // "12 words"/"24 words" centered at size 2 (8 chars = 96px in a 148px
+  // cell), the roll count centered at size 1 below it.
+  const char* line1 = (choice == 0) ? "12 words" : "24 words";
+  const char* line2 = (choice == 0) ? "(50 rolls)" : "(99 rolls)";
+  tft.setTextSize(2);
+  tft.setTextColor(selected ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
+  tft.setCursor(x + (MCELL_W - 12 * (int)strlen(line1)) / 2, y + 12);
+  tft.print(line1);
+  tft.setTextSize(1);
+  tft.setTextColor(selected ? TFT_GREEN : TFT_DARKGREY, TFT_BLACK);
+  tft.setCursor(x + (MCELL_W - 6 * (int)strlen(line2)) / 2, y + 42);
+  tft.print(line2);
+}
+
+static void drawMenuTouch() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 8);
+  tft.println("Dice -> Seed Phrase");
+  tft.setCursor(10, 32);
+  tft.println("Choose word count:");
+
+  // Same rule as the roll grid: nothing is shown as selected until a real
+  // choice has been made. Showing the internal default (12 words) as
+  // pre-selected would claim a choice the user has not made.
+  drawMenuCell(0, !menuNeedsSelect && menuChoice == 0);
+  drawMenuCell(1, !menuNeedsSelect && menuChoice == 1);
+
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setCursor(10, 138);
+  tft.println("Tap a count, tap it again to start");
+  tft.setCursor(10, 150);
+  tft.println("Buttons still work");
+  // Same spot as the non-touch menu -- the version string has to stay
+  // visible after flashing either build (see the comment in drawMenu).
+  tft.setCursor(200, 160);
+  tft.print("v");
+  tft.print(FIRMWARE_VERSION);
+}
 
 void drawMenu() {
+  if (dstouch::detected()) { drawMenuTouch(); return; }
+
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
@@ -301,6 +415,20 @@ void drawMenu() {
   tft.setCursor(200, 155);
   tft.print("v");
   tft.print(FIRMWARE_VERSION);
+}
+
+// Touch boards only: BTN2 with no count chosen must not start -- the
+// cells (correctly) show no default, so committing the hidden
+// menuChoice=0 would enter a 50-roll session the user never chose. Flash
+// the reason in red instead of silently ignoring the press; a plain no-op
+// would read as a dead button.
+static void menuRefuseStart() {
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_RED, TFT_BLACK);
+  tft.setCursor(10, 138);
+  tft.print("Select a word count first (tap or BTN1)  ");
+  delay(800);
+  drawMenu();
 }
 
 void startRolling() {
@@ -690,14 +818,44 @@ void setup() {
 void loop() {
   switch (screen) {
     case SCR_MENU: {
+      if (dstouch::detected()) {
+        int tx, ty;
+        if (dstouch::tapped(tx, ty)) {
+          int c = menuCellAtPoint(tx, ty);
+          // First tap lights a cell; a second tap on the SAME cell starts.
+          // Same two-tap rule as the roll grid: a mis-tap must not start a
+          // 50/99-roll session by accident, and "green = another tap here
+          // commits" stays the touch language on every screen.
+          if (c >= 0) {
+            if (menuNeedsSelect || c != menuChoice) {
+              menuChoice = c;
+              menuNeedsSelect = false;
+              drawMenu();
+            } else {
+              startRolling();
+              drawRolling();
+            }
+          }
+        }
+      }
       if (button1Pressed()) {
         menuChoice = 1 - menuChoice;
+        menuNeedsSelect = false;  // BTN1 is a choice; light it on the grid
         drawMenu();
       }
       int ev = button2Event();
       if (ev == 1) {
-        startRolling();
-        drawRolling();
+        // On a Touch board BTN2 does not start with nothing selected: the
+        // cells show no default, so committing the hidden menuChoice=0
+        // would be an invisible default -- the exact flaw issue #2 tracks
+        // on the roll screen, refused here. Non-touch boards keep the
+        // documented contract: the `>` marker shows what BTN2 will start.
+        if (dstouch::detected() && menuNeedsSelect) {
+          menuRefuseStart();
+        } else {
+          startRolling();
+          drawRolling();
+        }
       }
       break;
     }
