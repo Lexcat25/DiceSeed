@@ -108,7 +108,9 @@ buttons on a non-touch board — both confirmed on real hardware), and v2.3.0
 refusal to start an unchosen session), and v2.3.1 (BTN2's refusal to
 commit an unselected roll — confirmed on the Touch board; the non-touch
 white-until-chosen face rendering from the same change is compile-verified
-only, no non-touch board was on hand).
+only, no non-touch board was on hand), and v2.3.2 (the both-button
+leave-rolling escape hatch and its confirm screen — confirmed on the
+Touch board).
 
 **Getting the code onto disk, if you're not using `git clone`:** GitHub's
 "Download ZIP" (from the repo page or a Release) extracts to a folder named
@@ -187,7 +189,10 @@ though nothing about it is visible from a successful build log.
    red hint rather than silently recording the default. The face shows
    white until selected, green once chosen. Long-press button 2 to go back
    a roll if you mis-entered one. **On a Touch board** you can instead tap
-   the face directly — see "Touch input" below.
+   the face directly — see "Touch input" below. **To abandon a session**,
+   hold both buttons for 2 seconds on the roll screen: a confirm screen
+   offers Cancel (every entered roll kept) or Wipe & return to the menu
+   (RAM scrubbed, device reboots).
 3. After the last roll, the mnemonic is shown, four words per screen
    (button 2: next page). A red warning appears if every single roll came
    back identical — a sanity check, not a hard stop.
@@ -219,10 +224,11 @@ though nothing about it is visible from a successful build log.
 
 ## Touch input
 
-On a **T-Display S3 Touch** board the word-count menu and the roll-entry
-screen are touch-operable: the 12/24 counts and the six dice faces draw as
-tap cells. Nothing requires touch, and the buttons work identically on
-every screen either way. Touch is additive, never required.
+On a **T-Display S3 Touch** board the word-count menu, the roll-entry
+screen, and the leave-rolling confirm screen are touch-operable: the 12/24
+counts, the six dice faces, and the cancel/wipe cells draw as tap cells.
+Nothing requires touch, and the buttons work identically on every screen
+either way. Touch is additive, never required.
 
 - On the menu, the same rule one level up: **tap a word count to light it,
   tap the same count again to start**. No cell starts pre-lit, and until a
@@ -239,8 +245,11 @@ every screen either way. Touch is additive, never required.
   board — cycling with button 1 lights the matching cell. Mix the two freely.
 - Taps landing in the gaps between cells are ignored rather than snapped to the
   nearest one.
-- **The two-button wipe hold stays button-only.** It is meant to be hard to
-  trigger by accident, which a touch gesture would undermine.
+- **The two-button hold *gesture* stays button-only.** It is meant to be
+  hard to trigger by accident, which a touch gesture would undermine. On
+  the roll screen it opens a confirm screen whose *choices* are tappable
+  (the hard-to-trigger interlock has already fired); on the result screen
+  it remains an immediate wipe with no touch involvement.
 
 ### Hardware notes
 

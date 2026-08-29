@@ -202,8 +202,37 @@
 //                         non-touch digit rendering is compile-verified
 //                         only (no non-touch board on hand). Implements
 //                         issue #2.
+//   2.3.2 (2026-08-29) - Escape hatch from roll entry (issue #3): before
+//                         this the only exits were finishing all 50/99
+//                         rolls or power-cycling, because BTN2's
+//                         long-press only steps back ONE roll and the
+//                         two-button wipe lived solely on the result
+//                         screen. Now a 2s both-button hold on the roll
+//                         screen opens a confirm screen: Cancel returns
+//                         to rolling with every entered roll intact;
+//                         Wipe scrubs RAM and reboots to the menu via
+//                         the same release-then-restart path the result
+//                         screen's wipe always used (extracted into one
+//                         shared wipeAndRestart(); the result screen's
+//                         behavior is unchanged). The hold ENTRY stays
+//                         button-only, as documented -- touch is used
+//                         only for the affirmative confirm. To make the
+//                         gesture possible at all, SCR_ROLLING's button
+//                         handling became release-decided with "pure
+//                         press" voiding (the result screen's v2.0.1
+//                         pattern, generalized to both buttons): without
+//                         it, starting a hold with BTN1 would move the
+//                         face mid-gesture, and an abandoned hold would
+//                         fire a spurious go-back-one-roll on release.
+//                         Touch boards get the menu's two-cell layout
+//                         (no pre-highlight, two-tap confirm, BTN2
+//                         refuses unselected); non-touch boards get a
+//                         text list with the SAFE option (Cancel)
+//                         pre-highlighted per the displayed-value
+//                         contract. No idle auto-cancel: the screen
+//                         waits for a decision. Implements issue #3.
 
-#define FIRMWARE_VERSION_BASE "2.3.1"
+#define FIRMWARE_VERSION_BASE "2.3.2"
 
 #include "build_mode.h"
 #include "tft_setup.h" // must precede <TFT_eSPI.h> -- see that file for why
@@ -244,7 +273,7 @@ int rollsNeeded = 0;        // 50 or 99
 int entBytes = 0;           // 16 or 32
 int csBits = 0;             // 4 or 8
 
-enum Screen { SCR_MENU, SCR_ROLLING, SCR_RESULT, SCR_WIPE_CONFIRM };
+enum Screen { SCR_MENU, SCR_ROLLING, SCR_RESULT, SCR_WIPE_CONFIRM, SCR_RESET_CONFIRM };
 Screen screen = SCR_MENU;
 
 // ---- RAM scrubbing -----------------------------------------------------
@@ -347,6 +376,29 @@ bool menuNeedsSelect = true;    // the menu's analog of touchNeedsSelect:
                                 // consulted there (the `>` marker already
                                 // shows what BTN2 will start).
 
+// ---- Leave-rolling confirm (issue #3) ------------------------------------
+// Entered by a 2s both-button hold on the roll screen; see the SCR_ROLLING
+// and SCR_RESET_CONFIRM cases in loop().
+bool resetNeedsSelect = true;  // that screen's analog of menuNeedsSelect:
+                               // nothing chosen yet. Set on every entry.
+int resetChoice = 0;           // 0 = Cancel (keep rolling), 1 = Wipe
+
+// SCR_ROLLING's own raw-button tracking. Since v2.3.2 that screen cannot
+// use the shared edge helpers (button1Pressed/button2Event): a two-button
+// hold BEGINS with one button going down, and the helpers would act on
+// that press edge immediately -- BTN1 would move the face mid-gesture
+// (the exact v2.0.1 regression class) and BTN2's helper would later
+// report an abandoned hold as a long-press "go back one roll". So, like
+// the result screen, decisions there are made at RELEASE, and any press
+// the other button joined is voided ("pure press" only).
+unsigned long rollBothDownSince = 0;
+unsigned long rollBothUpSince = 0;  // debounces the hold's RELEASE (GPIO0 noise)
+bool rollBtn1WasDown = false;
+bool rollBtn1PureTap = false;
+bool rollBtn2WasDown = false;
+bool rollBtn2PurePress = false;
+unsigned long rollBtn2DownAt = 0;
+
 // ---- Touch menu cells ------------------------------------------------------
 // Only used when a touch panel is actually present. The button layout in
 // drawMenu() below is left exactly as it was, so a non-touch board renders
@@ -373,10 +425,12 @@ static int menuCellAtPoint(int x, int y) {
   return -1;
 }
 
-// Same visual language as drawCell: darkgrey/white when unchosen, a double
-// green border plus green text once selected -- the lit border is the
-// "did my tap land, and on what?" feedback.
-static void drawMenuCell(int choice, bool selected) {
+// Same visual language as the roll grid's cells: darkgrey/white when
+// unchosen, a double green border plus green text once selected -- the lit
+// border is the "did my tap land, and on what?" feedback. Shared by the
+// word-count menu and the leave-rolling confirm (same geometry, so
+// menuCellAtPoint serves both).
+static void drawMenuCell(int choice, const char* line1, const char* line2, bool selected) {
   int x, y;
   menuCellOrigin(choice, x, y);
   uint16_t border = selected ? TFT_GREEN : TFT_DARKGREY;
@@ -385,10 +439,8 @@ static void drawMenuCell(int choice, bool selected) {
   tft.drawRoundRect(x, y, MCELL_W, MCELL_H, 6, border);
   if (selected) tft.drawRoundRect(x + 1, y + 1, MCELL_W - 2, MCELL_H - 2, 5, border);
 
-  // "12 words"/"24 words" centered at size 2 (8 chars = 96px in a 148px
-  // cell), the roll count centered at size 1 below it.
-  const char* line1 = (choice == 0) ? "12 words" : "24 words";
-  const char* line2 = (choice == 0) ? "(50 rolls)" : "(99 rolls)";
+  // Line 1 centered at size 2 (e.g. "12 words" = 96px in a 148px cell),
+  // line 2 centered at size 1 below it.
   tft.setTextSize(2);
   tft.setTextColor(selected ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
   tft.setCursor(x + (MCELL_W - 12 * (int)strlen(line1)) / 2, y + 12);
@@ -411,8 +463,8 @@ static void drawMenuTouch() {
   // Same rule as the roll grid: nothing is shown as selected until a real
   // choice has been made. Showing the internal default (12 words) as
   // pre-selected would claim a choice the user has not made.
-  drawMenuCell(0, !menuNeedsSelect && menuChoice == 0);
-  drawMenuCell(1, !menuNeedsSelect && menuChoice == 1);
+  drawMenuCell(0, "12 words", "(50 rolls)", !menuNeedsSelect && menuChoice == 0);
+  drawMenuCell(1, "24 words", "(99 rolls)", !menuNeedsSelect && menuChoice == 1);
 
   tft.setTextSize(1);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
@@ -469,6 +521,55 @@ static void menuRefuseStart() {
   tft.print("Select a word count first (tap or BTN1)  ");
   delay(800);
   drawMenu();
+}
+
+// ---- Leave-rolling confirm screen (issue #3) -------------------------
+// The SAFE option (Cancel) leads both layouts: on non-touch it is the
+// pre-highlighted default per that board's displayed-value contract; on
+// touch nothing is pre-highlighted and BTN2 refuses to act unselected,
+// same as the menu.
+static void drawResetConfirmTouch() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 8);
+  tft.println("Leave rolling?");
+
+  drawMenuCell(0, "Cancel", "keep rolling", !resetNeedsSelect && resetChoice == 0);
+  drawMenuCell(1, "Wipe", "back to menu", !resetNeedsSelect && resetChoice == 1);
+
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setCursor(10, 138);
+  tft.println("Tap, tap again to confirm");
+  tft.setCursor(10, 150);
+  tft.println("Buttons still work");
+  tft.setCursor(10, 160);
+  tft.setTextColor(TFT_RED, TFT_BLACK);
+  tft.println("Wipe erases all rolls so far");
+}
+
+static void drawResetConfirm() {
+  if (dstouch::detected()) { drawResetConfirmTouch(); return; }
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 10);
+  tft.println("Leave rolling?");
+  tft.setCursor(10, 50);
+  tft.setTextColor(resetChoice == 0 ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
+  tft.println(resetChoice == 0 ? "> Cancel (keep rolling)" : "  Cancel (keep rolling)");
+  tft.setCursor(10, 75);
+  tft.setTextColor(resetChoice == 1 ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
+  tft.println(resetChoice == 1 ? "> Wipe, back to menu" : "  Wipe, back to menu");
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setCursor(10, 145);
+  tft.println("BTN1: toggle   BTN2: confirm");
+  tft.setCursor(10, 155);
+  tft.setTextColor(TFT_RED, TFT_BLACK);
+  tft.println("Wipe erases all rolls so far");
 }
 
 void startRolling() {
@@ -790,6 +891,25 @@ void drawWipeConfirm() {
   tft.println("and resetting...");
 }
 
+// Shared wipe-and-reboot path (v2.3.2): used by the result screen's
+// two-button hold and the leave-rolling confirm's Wipe choice. GPIO0
+// (BTN1) is the ESP32-S3's boot-strapping pin: if it is still held LOW
+// when the chip resets, it boots into the ROM download bootloader instead
+// of this sketch (black screen, stuck in bootloader over USB) -- hence
+// the wait for both buttons to be physically released before resetting.
+// The reboot lands on the menu, which also re-runs setup()'s boot-time
+// RAM scrub.
+static void wipeAndRestart() {
+  screen = SCR_WIPE_CONFIRM;
+  drawWipeConfirm();
+  scrubSensitiveRAM();
+  while (digitalRead(PIN_BUTTON_1) == LOW || digitalRead(PIN_BUTTON_2) == LOW) {
+    delay(20);
+  }
+  delay(300); // let the pin settle high before the reset samples it
+  esp_restart();
+}
+
 // A BTN2 short press with no face chosen must not commit: after
 // startRolling() and after every commit, currentFace resets to 1, so
 // committing the unshown default would silently record a roll the user
@@ -936,7 +1056,40 @@ void loop() {
           }
         }
       }
-      if (button1Pressed()) {
+      // ---- Raw button handling (see the rollBtn* comment block above) --
+      // Decisions at RELEASE, voided if the other button joined; the
+      // two-button hold is checked first so its trigger can never be
+      // accompanied by a single-button side effect.
+      bool b1 = (digitalRead(PIN_BUTTON_1) == LOW);
+      bool b2 = (digitalRead(PIN_BUTTON_2) == LOW);
+
+      // Two-button hold: 2s opens the leave-rolling confirm (issue #3).
+      // The release is debounced (150ms) like the result screen's wipe
+      // hold -- GPIO0 also carries the boot-strap role and is noisier
+      // than a plain GPIO.
+      if (b1 && b2) {
+        rollBothUpSince = 0;
+        if (rollBothDownSince == 0) rollBothDownSince = millis();
+        if (millis() - rollBothDownSince >= 2000) {
+          rollBothDownSince = 0;
+          resetNeedsSelect = true;
+          resetChoice = 0;
+          screen = SCR_RESET_CONFIRM;
+          drawResetConfirm();
+          break;
+        }
+      } else if (rollBothDownSince != 0) {
+        if (rollBothUpSince == 0) rollBothUpSince = millis();
+        if (millis() - rollBothUpSince >= 150) {
+          rollBothDownSince = 0;
+          rollBothUpSince = 0;
+        }
+      }
+
+      // BTN1: reveal/advance, but only if released as a pure tap.
+      if (b1 && !rollBtn1WasDown) rollBtn1PureTap = true;
+      if (b1 && b2) rollBtn1PureTap = false;
+      if (!b1 && rollBtn1WasDown && rollBtn1PureTap) {
         // First press REVEALS the current face (1 after start/commit)
         // rather than advancing past it: nothing is lit, so stepping to
         // 2 on the first press would make face 1 reachable only by
@@ -949,26 +1102,39 @@ void loop() {
         }
         drawRolling();
       }
-      int ev = button2Event();
-      if (ev == 1) {
-        // v2.3.1: BTN2 cannot commit a roll nobody chose. With no
-        // selection the internal currentFace is the post-commit reset
-        // value (1) -- committing it would record a value the user never
-        // entered, silently. The touch path already enforced this (a
-        // first tap can only select); this extends the same rule to
-        // BTN2, on every board. Refused with feedback, never a no-op.
-        if (touchNeedsSelect) {
-          rollRefuseCommit();
-        } else {
-          confirmCurrentRoll();
-        }
-      } else if (ev == 2 && currentRollIndex > 0) {
-        currentRollIndex--;
-        currentFace = rolls[currentRollIndex];
-        rolls[currentRollIndex] = 0;
-        touchNeedsSelect = false;  // the restored value is a real choice
-        drawRolling();
+      rollBtn1WasDown = b1;
+
+      // BTN2: short = commit (gated, v2.3.1), long = back one roll --
+      // only if released as a pure press, so an abandoned two-button
+      // hold can never fire a spurious go-back.
+      if (b2 && !rollBtn2WasDown) {
+        rollBtn2DownAt = millis();
+        rollBtn2PurePress = true;
       }
+      if (b1 && b2) rollBtn2PurePress = false;
+      if (!b2 && rollBtn2WasDown && rollBtn2PurePress) {
+        unsigned long held = millis() - rollBtn2DownAt;
+        if (held >= 800) {
+          if (currentRollIndex > 0) {
+            currentRollIndex--;
+            currentFace = rolls[currentRollIndex];
+            rolls[currentRollIndex] = 0;
+            touchNeedsSelect = false;  // the restored value is a real choice
+            drawRolling();
+          }
+        } else {
+          // v2.3.1: BTN2 cannot commit a roll nobody chose. With no
+          // selection the internal currentFace is the post-commit reset
+          // value (1) -- committing it would record a value the user
+          // never entered, silently. Refused with feedback, never a no-op.
+          if (touchNeedsSelect) {
+            rollRefuseCommit();
+          } else {
+            confirmCurrentRoll();
+          }
+        }
+      }
+      rollBtn2WasDown = b2;
       break;
     }
 
@@ -979,19 +1145,9 @@ void loop() {
         bothUpSince = 0; // solidly down again; cancel any pending release
         if (bothDownSince == 0) bothDownSince = millis();
         if (millis() - bothDownSince >= 2000) {
-          screen = SCR_WIPE_CONFIRM;
-          drawWipeConfirm();
-          scrubSensitiveRAM();
-          // GPIO0 (BTN1) is the ESP32-S3's boot-strapping pin: if it's still
-          // held LOW when the chip resets, it boots into the ROM download
-          // bootloader instead of this sketch (black screen, stuck in
-          // bootloader over USB). Wait for both buttons to be physically
-          // released before resetting.
-          while (digitalRead(PIN_BUTTON_1) == LOW || digitalRead(PIN_BUTTON_2) == LOW) {
-            delay(20);
-          }
-          delay(300); // let the pin settle high before the reset samples it
-          esp_restart();
+          // Shared wipe path (v2.3.2) -- same sequence the leave-rolling
+          // confirm uses; behavior identical to when this was inline.
+          wipeAndRestart();
         }
       } else if (bothDownSince != 0) {
         // Debounce the RELEASE, not just the press: GPIO0 also carries the
@@ -1066,6 +1222,62 @@ void loop() {
             verifyStep = 0;
             startVerifyStep();
           }
+        }
+      }
+      break;
+    }
+
+    case SCR_RESET_CONFIRM: {
+      // Just entered via a 2s hold: both buttons are still physically
+      // down. Ignore ALL input until they are released, so the shared
+      // helpers' edge state (shaped by the hold's press and release) can
+      // never leak into this screen's decisions.
+      if (digitalRead(PIN_BUTTON_1) == LOW || digitalRead(PIN_BUTTON_2) == LOW) {
+        break;
+      }
+
+      if (dstouch::detected()) {
+        int tx, ty;
+        if (dstouch::tapped(tx, ty)) {
+          int c = menuCellAtPoint(tx, ty);
+          // Same two-tap rule as the menu: first tap lights a cell, a
+          // second tap on that cell commits it. Misses are ignored.
+          if (c >= 0) {
+            if (resetNeedsSelect || c != resetChoice) {
+              resetChoice = c;
+              resetNeedsSelect = false;
+              drawResetConfirm();
+            } else if (resetChoice == 0) {
+              screen = SCR_ROLLING;  // rolls untouched
+              drawRolling();
+            } else {
+              wipeAndRestart();
+            }
+          }
+        }
+      }
+      if (button1Pressed()) {
+        resetChoice = 1 - resetChoice;
+        resetNeedsSelect = false;  // BTN1 is a choice; light it
+        drawResetConfirm();
+      }
+      int ev = button2Event();
+      if (ev == 1) {
+        // Touch boards: refuse with feedback until a choice exists (same
+        // rule as the menu). Non-touch boards commit the shown option --
+        // the `>` marker always displays what BTN2 will do.
+        if (dstouch::detected() && resetNeedsSelect) {
+          tft.setTextSize(1);
+          tft.setTextColor(TFT_RED, TFT_BLACK);
+          tft.setCursor(10, 138);
+          tft.print("Select an option first (tap or BTN1) ");
+          delay(800);
+          drawResetConfirm();
+        } else if (resetChoice == 0) {
+          screen = SCR_ROLLING;  // rolls untouched
+          drawRolling();
+        } else {
+          wipeAndRestart();
         }
       }
       break;
