@@ -259,8 +259,18 @@
 //                         (enters the quiz), and < gives touch a
 //                         back-a-page the buttons never had. Implements
 //                         issue #4.
+//   2.4.0 (2026-08-29) - Back cell on the touch roll
+//                         screen, top-left, left of the roll counter --
+//                         single-tap steps back one roll for re-entry,
+//                         the same action BTN2's long-press has always
+//                         performed, now via one shared goBackOneRoll().
+//                         No-op (drawn dim) on the first roll, like < on
+//                         page 1 of the word pages. Single-tap for the
+//                         same reason page nav is: instantly reversible,
+//                         and the redraw is the feedback. Non-touch
+//                         boards are unchanged.
 
-#define FIRMWARE_VERSION_BASE "2.3.3"
+#define FIRMWARE_VERSION_BASE "2.4.0"
 
 #include "build_mode.h"
 #include "tft_setup.h" // must precede <TFT_eSPI.h> -- see that file for why
@@ -627,6 +637,12 @@ static const int GRID_X0 = 8, GRID_Y0 = 32;
 static const int CELL_W = 98, CELL_H = 52;
 static const int CELL_DX = 103, CELL_DY = 56;  // cell pitch, including gaps
 
+// Back cell (touch roll screen, v2.4.0): top-left corner,
+// left of the "Roll N / M" counter. The title row is ~16px tall with a
+// 10px gap below it before the grid, so a 36x30 cell fits the corner
+// without touching the grid's top row (GRID_Y0=32).
+static const int ROLLBACK_X = 4, ROLLBACK_Y = 0, ROLLBACK_W = 36, ROLLBACK_H = 30;
+
 static void cellOrigin(int face, int &x, int &y) {
   int i = face - 1;                 // 1..6 -> 0..5, laid out 3 across, 2 down
   x = GRID_X0 + (i % 3) * CELL_DX;
@@ -666,9 +682,23 @@ static void drawCell(int face, bool selected) {
 
 static void drawRollingTouch() {
   tft.fillScreen(TFT_BLACK);
+
+  // Back cell, top-left, LEFT of the roll counter: single-tap steps back
+  // one roll for re-entry -- the same action BTN2's long-press performs
+  // (one shared goBackOneRoll()). Drawn dim on the first roll, where
+  // there is nothing to go back to (taps there are no-ops, like < on
+  // page 1 of the word pages).
+  bool canGoBack = (currentRollIndex > 0);
+  tft.fillRoundRect(ROLLBACK_X, ROLLBACK_Y, ROLLBACK_W, ROLLBACK_H, 6, TFT_BLACK);
+  tft.drawRoundRect(ROLLBACK_X, ROLLBACK_Y, ROLLBACK_W, ROLLBACK_H, 6, TFT_DARKGREY);
+  tft.setTextSize(3);  // 18x24 px glyph
+  tft.setTextColor(canGoBack ? TFT_WHITE : TFT_DARKGREY, TFT_BLACK);
+  tft.setCursor(ROLLBACK_X + (ROLLBACK_W - 18) / 2, ROLLBACK_Y + (ROLLBACK_H - 24) / 2);
+  tft.print("<");
+
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
-  tft.setCursor(10, 6);
+  tft.setCursor(ROLLBACK_X + ROLLBACK_W + 8, 6);
   tft.printf("Roll %d / %d", currentRollIndex + 1, rollsNeeded);
 
   // Nothing is shown as selected until a tap has actually landed: on entry
@@ -683,7 +713,7 @@ static void drawRollingTouch() {
   tft.setCursor(10, 146);
   tft.println("Tap a number, then tap it again to confirm");
   tft.setCursor(10, 156);
-  tft.println("Buttons still work.  BTN2 hold: previous roll");
+  tft.println("Buttons still work.  < or BTN2 hold: back a roll");
 }
 
 void drawRolling() {
@@ -1080,6 +1110,18 @@ static void rollRefuseCommit() {
   drawRolling();
 }
 
+// Steps back one roll for re-entry: the previously committed roll is
+// restored as the shown face and un-committed. Extracted (v2.4.0) from
+// the BTN2 long-press handler so the touch back cell performs exactly
+// the same code -- same single-source reasoning as confirmCurrentRoll.
+void goBackOneRoll() {
+  currentRollIndex--;
+  currentFace = rolls[currentRollIndex];
+  rolls[currentRollIndex] = 0;
+  touchNeedsSelect = false;  // the restored value is a real choice
+  drawRolling();
+}
+
 // Commits the currently shown face as the next roll. Extracted verbatim from
 // the BTN2 handler so the touch path commits through exactly the same code --
 // duplicating the entropy-derivation block for a second caller would be the
@@ -1197,16 +1239,24 @@ void loop() {
       if (dstouch::detected()) {
         int tx, ty;
         if (dstouch::tapped(tx, ty)) {
-          int f = faceAtPoint(tx, ty);
-          // First tap selects (and lights that cell's border); a second tap on
-          // the SAME cell commits. Deliberately not commit-on-first-tap: a
-          // mis-tap would otherwise write a wrong roll with no warning.
-          if (f != 0 && (touchNeedsSelect || f != currentFace)) {
-            currentFace = f;
-            touchNeedsSelect = false;
-            drawRolling();
-          } else if (f != 0) {
-            confirmCurrentRoll();
+          // Back cell (top-left): single-tap -- instantly reversible, the
+          // redraw is the feedback -- same action as BTN2's long-press.
+          // No-op on the first roll.
+          if (tx >= ROLLBACK_X && tx < ROLLBACK_X + ROLLBACK_W &&
+              ty >= ROLLBACK_Y && ty < ROLLBACK_Y + ROLLBACK_H) {
+            if (currentRollIndex > 0) goBackOneRoll();
+          } else {
+            int f = faceAtPoint(tx, ty);
+            // First tap selects (and lights that cell's border); a second tap on
+            // the SAME cell commits. Deliberately not commit-on-first-tap: a
+            // mis-tap would otherwise write a wrong roll with no warning.
+            if (f != 0 && (touchNeedsSelect || f != currentFace)) {
+              currentFace = f;
+              touchNeedsSelect = false;
+              drawRolling();
+            } else if (f != 0) {
+              confirmCurrentRoll();
+            }
           }
         }
       }
@@ -1270,11 +1320,7 @@ void loop() {
         unsigned long held = millis() - rollBtn2DownAt;
         if (held >= 800) {
           if (currentRollIndex > 0) {
-            currentRollIndex--;
-            currentFace = rolls[currentRollIndex];
-            rolls[currentRollIndex] = 0;
-            touchNeedsSelect = false;  // the restored value is a real choice
-            drawRolling();
+            goBackOneRoll();
           }
         } else {
           // v2.3.1: BTN2 cannot commit a roll nobody chose. With no

@@ -190,7 +190,8 @@ though nothing about it is visible from a successful build log.
    red hint rather than silently recording the default. The face shows
    white until selected, green once chosen. Long-press button 2 to go back
    a roll if you mis-entered one. **On a Touch board** you can instead tap
-   the face directly — see "Touch input" below. **To abandon a session**,
+   the face directly — and tap the `<` cell at the top-left to go back a
+   roll — see "Touch input" below. **To abandon a session**,
    hold both buttons for 2 seconds on the roll screen: a confirm screen
    offers Cancel (every entered roll kept) or Wipe & return to the menu
    (RAM scrubbed, device reboots).
@@ -232,10 +233,11 @@ though nothing about it is visible from a successful build log.
 
 On a **T-Display S3 Touch** board the word-count menu, the roll-entry
 screen, the leave-rolling confirm screen, and the result screen are
-touch-operable: the 12/24 counts, the six dice faces, the cancel/wipe
-cells, the word-page `<`/`>` paging cells, and the quiz's candidate words
-draw as tap cells (paging cells are single-tap — page flips are instantly
-reversible; everything that commits a choice keeps the two-tap rule).
+touch-operable: the 12/24 counts, the six dice faces, the roll screen's
+`<` back cell, the cancel/wipe cells, the word-page `<`/`>` paging cells,
+and the quiz's candidate words draw as tap cells (the back and paging
+cells are single-tap — instantly reversible; everything that commits a
+choice keeps the two-tap rule).
 Nothing requires touch, and the buttons work identically on every screen
 either way. Touch is additive, never required.
 
