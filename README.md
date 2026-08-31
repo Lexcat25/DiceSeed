@@ -101,9 +101,17 @@ Confirmed working on real hardware as of v1.2.0 (display renders correctly),
 v2.0.1 (compat build's entropy matched both SeedSigner and iancoleman.io on
 the same rolls; the two-button wipe hold works correctly — a v2.0.0
 regression in that gesture was found and fixed in v2.0.1, see the version
-history in `DiceSeed.ino`), v2.1.0 (the backup-verification quiz), and
-v2.2.0 (tap-to-enter rolls on a Touch board, and the same binary falling
-back to buttons on a non-touch board — both confirmed on real hardware).
+history in `DiceSeed.ino`), v2.1.0 (the backup-verification quiz), v2.2.0
+(tap-to-enter rolls on a Touch board, and the same binary falling back to
+buttons on a non-touch board — both confirmed on real hardware), and v2.3.0
+(the word-count menu as tap cells on a Touch board, including BTN2's
+refusal to start an unchosen session), and v2.3.1 (BTN2's refusal to
+commit an unselected roll — confirmed on the Touch board; the non-touch
+white-until-chosen face rendering from the same change is compile-verified
+only, no non-touch board was on hand), and v2.3.2 (the both-button
+leave-rolling escape hatch and its confirm screen — confirmed on the
+Touch board), and v2.3.3 (quiz candidate cells and word-page paging
+cells — confirmed on the Touch board via a full 50-roll session).
 
 **Getting the code onto disk, if you're not using `git clone`:** GitHub's
 "Download ZIP" (from the repo page or a Release) extracts to a folder named
@@ -172,21 +180,36 @@ though nothing about it is visible from a successful build log.
 ## Using it
 
 1. Power on → menu: toggle 12-word (50 rolls) / 24-word (99 rolls) with
-   button 1, confirm with button 2.
-2. For each roll: cycle the shown face 1–6 with button 1 to match your
-   physical die, confirm with button 2. Long-press button 2 to go back a
-   roll if you mis-entered one. **On a Touch board** you can instead tap the
-   face directly — see "Touch input" below.
+   button 1, confirm with button 2. **On a Touch board** the two counts are
+   tap cells — tap one to light it, tap the same one again to start (see
+   "Touch input" below).
+2. For each roll: cycle the face 1–6 with button 1 to match your physical
+   die, confirm with button 2. The first button-1 press lights the current
+   face (1 after each commit); each further press advances it — so a roll
+   of N takes N presses. An unselected press of button 2 is refused with a
+   red hint rather than silently recording the default. The face shows
+   white until selected, green once chosen. Long-press button 2 to go back
+   a roll if you mis-entered one. **On a Touch board** you can instead tap
+   the face directly — and tap the `<` cell at the top-left to go back a
+   roll — see "Touch input" below. **To abandon a session**,
+   hold both buttons for 2 seconds on the roll screen: a confirm screen
+   offers Cancel (every entered roll kept) or Wipe & return to the menu
+   (RAM scrubbed, device reboots).
 3. After the last roll, the mnemonic is shown, four words per screen
-   (button 2: next page). A red warning appears if every single roll came
+   (button 2: next page; **on a Touch board** the `<`/`>` cells at the
+   right edge page back and forward — `<` is ignored on page 1, and `>`
+   on the last page starts the backup check). A red warning appears if
+   every single roll came
    back identical — a sanity check, not a hard stop.
 4. After the last word page, button 2 leads into a **3-step backup quiz**
    instead of wrapping back to page 1, spot-checking word #3, #7, and #11
    (12-word) or #6, #14, and #22 (24-word) — spread roughly
-   beginning/middle/end of the phrase. Each check shows one candidate word
-   at a time out of 3 (the real word plus 2 decoys); cycle through them
-   with button 1, lock in your pick with button 2, and it tells you
-   right/wrong before moving to the next checkpoint. This is a genuine
+   beginning/middle/end of the phrase. Each check presents the 3
+   candidates (the real word plus 2 decoys) — one at a time on button
+   boards, or as three tap cells on a Touch board (tap one to light it,
+   tap it again to lock in); cycle with button 1, lock in your pick with
+   button 2, and it tells you right/wrong; button 2 — or, on a Touch
+   board, any tap — moves to the next checkpoint. This is a genuine
    blind pick, not a "here's the answer, compare it yourself" re-display —
    it's meant to catch "I misread the word and wrote down the wrong one
    confidently," not just "did I copy it correctly," which is the more
@@ -208,9 +231,20 @@ though nothing about it is visible from a successful build log.
 
 ## Touch input
 
-On a **T-Display S3 Touch** board the roll-entry screen shows the six faces as
-a tap grid. Nothing else in the app uses touch, and nothing requires it.
+On a **T-Display S3 Touch** board the word-count menu, the roll-entry
+screen, the leave-rolling confirm screen, and the result screen are
+touch-operable: the 12/24 counts, the six dice faces, the roll screen's
+`<` back cell, the cancel/wipe cells, the word-page `<`/`>` paging cells,
+and the quiz's candidate words draw as tap cells (the back and paging
+cells are single-tap — instantly reversible; everything that commits a
+choice keeps the two-tap rule).
+Nothing requires touch, and the buttons work identically on every screen
+either way. Touch is additive, never required.
 
+- On the menu, the same rule one level up: **tap a word count to light it,
+  tap the same count again to start**. No cell starts pre-lit, and until a
+  count is chosen BTN2 refuses to start (red hint) instead of committing
+  an invisible default.
 - **First tap selects** a face and turns its cell green. **A second tap on that
   same cell commits** the roll. It is deliberately not commit-on-first-tap: a
   mis-tap would otherwise write a wrong roll with no warning, and on this
@@ -222,8 +256,11 @@ a tap grid. Nothing else in the app uses touch, and nothing requires it.
   board — cycling with button 1 lights the matching cell. Mix the two freely.
 - Taps landing in the gaps between cells are ignored rather than snapped to the
   nearest one.
-- **The two-button wipe hold stays button-only.** It is meant to be hard to
-  trigger by accident, which a touch gesture would undermine.
+- **The two-button hold *gesture* stays button-only.** It is meant to be
+  hard to trigger by accident, which a touch gesture would undermine. On
+  the roll screen it opens a confirm screen whose *choices* are tappable
+  (the hard-to-trigger interlock has already fired); on the result screen
+  it remains an immediate wipe with no touch involvement.
 
 ### Hardware notes
 
@@ -259,7 +296,10 @@ is documented at length in `touch.h`:
   `memset`, which a compiler can optimize away as a dead store) at boot and
   before the wipe-triggered reset. This now includes the raw entropy buffer
   (kept in RAM for the hex display above), not just the rolls and mnemonic.
-- Entropy comes **only** from the dice rolls you enter. The one place this
+- Entropy comes **only** from the dice rolls you enter — enforced since
+  v2.3.1, not just stated: an unselected roll cannot be committed (BTN2
+  is refused until a face was deliberately chosen), so a default value
+  the user never picked cannot enter the rolls. The one place this
   device's hardware RNG (`esp_random()`) is used at all is picking which
   *wrong* words to show as decoys in the backup-verification quiz below —
   that has no bearing on the mnemonic itself and isn't part of the entropy
