@@ -87,8 +87,8 @@ specifically wants to redo the whole derivation by hand wants **classic**
 instead.
 
 To build classic instead of the default:
-- Edit `build_mode.h`, change the `1` to `0`, then compile/upload as usual — or
-- `arduino-cli`, without touching tracked source:
+- Edit `DiceSeed/build_mode.h`, change the `1` to `0`, then compile/upload as usual — or
+- `arduino-cli`, without touching tracked source (run from inside `DiceSeed/`):
   `arduino-cli compile --fqbn esp32:esp32:lilygo_t_display_s3 --build-property "build.extra_flags=-DDICESEED_COMPAT_BUILD=0" .`
 
 The menu screen's version string shows which one is actually flashed
@@ -111,21 +111,23 @@ white-until-chosen face rendering from the same change is compile-verified
 only, no non-touch board was on hand), and v2.3.2 (the both-button
 leave-rolling escape hatch and its confirm screen — confirmed on the
 Touch board), and v2.3.3 (quiz candidate cells and word-page paging
-cells — confirmed on the Touch board via a full 50-roll session).
+cells — confirmed on the Touch board via a full 50-roll session), and
+v2.4.0 (a back cell on the touch roll screen — confirmed on the Touch
+board), and v2.4.1 (repository layout only: the sketch moved into a
+`DiceSeed/` subdirectory so "Download ZIP" opens cleanly — no firmware
+change, byte-for-byte identical to v2.4.0).
 
-**Getting the code onto disk, if you're not using `git clone`:** GitHub's
-"Download ZIP" (from the repo page or a Release) extracts to a folder named
-`DiceSeed-<version>` or `DiceSeed-main`, not `DiceSeed`. Arduino requires a
-sketch's `.ino` to sit in a folder with the *exact same name* — if that
-doesn't match, opening `DiceSeed.ino` makes the IDE "helpfully" create a
-correctly-named `DiceSeed` subfolder and move **only the `.ino`** into it,
-stranding `build_mode.h`, `diceseed_core.h`, `bip39_wordlist.h`,
-`tft_setup.h`, and `touch.h` one level up, outside the folder the compiler
-actually looks in — a `fatal error: build_mode.h: No such file or directory`
-that has nothing to do with your setup. **Rename the extracted folder to exactly
-`DiceSeed` before opening anything in the IDE**, and this never happens.
-`git clone https://github.com/Lexcat25/DiceSeed.git` sidesteps it
-entirely, since the cloned folder is already named `DiceSeed`.
+**Getting the code onto disk:** `git clone
+https://github.com/Lexcat25/DiceSeed.git`, or use GitHub's "Download ZIP".
+Either way the sketch lives in the `DiceSeed/` subdirectory — open
+`DiceSeed/DiceSeed.ino` in the Arduino IDE. Since that folder is named
+`DiceSeed`, matching the `.ino`, the IDE opens it directly with every
+header (`build_mode.h`, `diceseed_core.h`, `bip39_wordlist.h`,
+`tft_setup.h`, `touch.h`) alongside it. (Before v2.4.1 the sketch sat at
+the repo root, and a ZIP download — which unpacks to `DiceSeed-<version>/`,
+not `DiceSeed/` — triggered a `fatal error: build_mode.h: No such file or
+directory` for anyone not using `git clone`. The `DiceSeed/` subdirectory
+is the fix.)
 
 1. Install [Arduino IDE](https://www.arduino.cc/en/software) (2.x) or
    [`arduino-cli`](https://arduino.github.io/arduino-cli/).
@@ -140,11 +142,12 @@ entirely, since the cloned folder is already named `DiceSeed`.
    Boards Manager), which also gets the flash size (16MB) and partition table right. The
    generic "ESP32S3 Dev Module" entry also compiles this sketch, but under different
    flash/partition defaults that don't match what's actually on the board.
-5. Open `DiceSeed.ino` and compile/upload. No other Tools-menu settings need
-   changing — the sketch opens no serial port, so the USB CDC options don't
-   matter either way.
+5. Open `DiceSeed/DiceSeed.ino` and compile/upload. No other Tools-menu
+   settings need changing — the sketch opens no serial port, so the USB CDC
+   options don't matter either way.
 
-The same thing with `arduino-cli`, run from inside the sketch folder:
+The same thing with `arduino-cli`, run from inside the `DiceSeed/` sketch
+folder (`cd DiceSeed` from the repo root):
 
 ```sh
 # one-time setup

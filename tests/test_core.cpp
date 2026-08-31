@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include "../diceseed_core.h"
+#include "../DiceSeed/diceseed_core.h"
 #include "vectors.h"
 
 static int failures = 0;

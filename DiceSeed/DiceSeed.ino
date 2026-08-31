@@ -269,8 +269,21 @@
 //                         same reason page nav is: instantly reversible,
 //                         and the redraw is the feedback. Non-touch
 //                         boards are unchanged.
+//   2.4.1 (2026-08-31) - Repo layout fix, NO code change. The sketch and
+//                         its headers moved into a DiceSeed/ subdirectory
+//                         so GitHub's "Download ZIP" now extracts to
+//                         DiceSeed-<ver>/DiceSeed/DiceSeed.ino -- the
+//                         folder holding the .ino is finally named
+//                         "DiceSeed", so the Arduino IDE opens it with no
+//                         folder shuffle and no stranded headers (the
+//                         "fatal error: build_mode.h: No such file or
+//                         directory" a flat repo root produced for anyone
+//                         not using git clone). Firmware behavior is
+//                         byte-for-byte identical to v2.4.0; only file
+//                         paths, tests/test_core.cpp's include, and the
+//                         build commands in README.md changed.
 
-#define FIRMWARE_VERSION_BASE "2.4.0"
+#define FIRMWARE_VERSION_BASE "2.4.1"
 
 #include "build_mode.h"
 #include "tft_setup.h" // must precede <TFT_eSPI.h> -- see that file for why
